@@ -1,0 +1,40 @@
+{
+  "plugin": {
+    "name": "{{PLUGIN_NAME}}",
+    "package": "{{PACKAGE_NAME}}"
+  },
+  "filakit": {
+    "kit": "jeffersongoncalves/basev5"
+  },
+  "install": {
+    "extra_packages": [],
+    "plugins": [
+      {
+        "class": "{{PLUGIN_CLASS}}",
+        "panel": "admin"
+      }
+    ],
+    "publish": [],
+    "post_install_commands": ["migrate"]
+  },
+  "seed": {
+    "auto_detect": true,
+    "user": {
+      "email": "admin@example.com",
+      "password": "password",
+      "name": "Admin User"
+    },
+    "models": []
+  },
+  "screenshots": [],
+  "output": {
+    "directory": "screenshots",
+    "themes": ["light", "dark"],
+    "format": "png"
+  },
+  "readme": {
+    "update": true,
+    "section_marker": "<!-- SCREENSHOTS -->",
+    "template": "table"
+  }
+}
