@@ -24,10 +24,10 @@ class ProjectService
             File::deleteDirectory($tempDir);
         }
 
-        $this->process->runOrFail(
-            "laravel new {$tempDir} --using={$config->filakit->kit} --no-interaction",
-            timeout: 600,
-        );
+        $command = $this->process->phpBinary().' '.$this->process->composerBinary()
+            ." create-project {$config->filakit->kit} {$tempDir} --no-interaction --prefer-dist";
+
+        $this->process->runOrFail($command, timeout: 600);
 
         return $tempDir;
     }
