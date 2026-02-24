@@ -18,15 +18,15 @@ class ProjectService
 
     public function create(ScreentestConfig $config): string
     {
-        $tempDir = config('screentest.temp_directory');
+        $tempDir = str_replace('\\', '/', config('screentest.temp_directory'));
 
         if (File::isDirectory($tempDir)) {
             File::deleteDirectory($tempDir);
         }
 
         $this->process->runOrFail(
-            $this->process->filakitBinary()." new {$tempDir} --kit={$config->filakit->kit}",
-            timeout: 300,
+            "laravel new {$tempDir} --using={$config->filakit->kit} --no-interaction",
+            timeout: 600,
         );
 
         return $tempDir;

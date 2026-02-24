@@ -112,7 +112,7 @@ The `screentest.json` file controls the entire process:
 - Node.js (for Puppeteer)
 - pnpm
 - Composer
-- [Filakit CLI](https://github.com/jeffersongoncalves/filakit-cli) (installed globally)
+- [Laravel Installer](https://github.com/laravel/installer) v5+ (installed globally)
 
 ## How It Works
 

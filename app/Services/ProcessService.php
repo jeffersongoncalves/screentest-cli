@@ -34,11 +34,6 @@ class ProcessService
         return $this->php('artisan '.$arguments, $cwd, $timeout);
     }
 
-    public function filakit(string $arguments, ?string $cwd = null, ?int $timeout = 300): \Illuminate\Contracts\Process\ProcessResult
-    {
-        return $this->run($this->filakitBinary().' '.$arguments, $cwd, $timeout);
-    }
-
     public function run(string $command, ?string $cwd = null, ?int $timeout = 120): \Illuminate\Contracts\Process\ProcessResult
     {
         $process = Process::timeout($timeout);
@@ -90,10 +85,5 @@ class ProcessService
     public function pnpmBinary(): string
     {
         return config('screentest.pnpm_binary', 'pnpm');
-    }
-
-    public function filakitBinary(): string
-    {
-        return config('screentest.filakit_binary', 'filakit');
     }
 }
