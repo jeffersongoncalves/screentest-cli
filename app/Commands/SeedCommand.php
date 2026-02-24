@@ -49,7 +49,7 @@ class SeedCommand extends Command
 
         $seedCount = 1 + count($config->seed->models);
         if ($config->seed->autoDetect) {
-            $this->info("Seeds generated and executed with auto-detection enabled.");
+            $this->info('Seeds generated and executed with auto-detection enabled.');
         } else {
             $this->info("Seeds generated and executed for {$seedCount} model(s).");
         }

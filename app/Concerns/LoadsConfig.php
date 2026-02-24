@@ -3,7 +3,6 @@
 namespace App\Concerns;
 
 use App\DTOs\ScreentestConfig;
-use App\Exceptions\ConfigNotFoundException;
 use App\Services\ConfigService;
 
 trait LoadsConfig

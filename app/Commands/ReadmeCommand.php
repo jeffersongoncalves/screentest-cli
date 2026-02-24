@@ -6,7 +6,6 @@ namespace App\Commands;
 
 use App\Concerns\LoadsConfig;
 use App\DTOs\CaptureResult;
-use App\Enums\Theme;
 use App\Services\ReadmeService;
 use LaravelZero\Framework\Commands\Command;
 

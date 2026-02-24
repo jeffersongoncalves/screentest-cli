@@ -11,7 +11,7 @@ class ConfigValidationException extends \RuntimeException
 
     public static function withErrors(array $errors): self
     {
-        $instance = new self('Configuration validation failed: ' . implode('; ', $errors));
+        $instance = new self('Configuration validation failed: '.implode('; ', $errors));
         $instance->errors = $errors;
 
         return $instance;

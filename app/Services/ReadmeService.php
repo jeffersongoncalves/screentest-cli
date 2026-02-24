@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\DTOs\CaptureResult;
-use App\DTOs\ReadmeConfig;
 use App\DTOs\ScreentestConfig;
 
 class ReadmeService
@@ -88,7 +87,7 @@ class ReadmeService
             $lines[] = '';
 
             foreach ($themeResults as $theme => $result) {
-                $lines[] = "**".ucfirst($theme)."**";
+                $lines[] = '**'.ucfirst($theme).'**';
                 $lines[] = '';
                 $lines[] = "![{$name} - {$theme}]({$dir}/{$theme}/{$name}.{$format})";
                 $lines[] = '';
