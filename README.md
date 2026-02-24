@@ -60,7 +60,7 @@ The `screentest.json` file controls the entire process:
     "package": "vendor/my-plugin"
   },
   "filakit": {
-    "kit": "jeffersongoncalves/basev5"
+    "kit": "filakitphp/basev5"
   },
   "install": {
     "extra_packages": [],

@@ -102,10 +102,10 @@ class InitCommand extends Command
 
         // Determine Filakit based on detected Filament version
         $filakitKit = match ($analysis->filamentVersion) {
-            \App\Enums\FilamentVersion::V3 => 'jeffersongoncalves/basev3',
-            \App\Enums\FilamentVersion::V4 => 'jeffersongoncalves/basev4',
-            \App\Enums\FilamentVersion::V5 => 'jeffersongoncalves/basev5',
-            default => 'jeffersongoncalves/basev5',
+            \App\Enums\FilamentVersion::V3 => 'filakitphp/basev3',
+            \App\Enums\FilamentVersion::V4 => 'filakitphp/basev4',
+            \App\Enums\FilamentVersion::V5 => 'filakitphp/basev5',
+            default => 'filakitphp/basev5',
         };
 
         // Build the config array

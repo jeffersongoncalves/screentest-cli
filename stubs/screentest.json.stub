@@ -4,7 +4,7 @@
     "package": "{{PACKAGE_NAME}}"
   },
   "filakit": {
-    "kit": "jeffersongoncalves/basev5"
+    "kit": "filakitphp/basev5"
   },
   "install": {
     "extra_packages": [],
