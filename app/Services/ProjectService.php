@@ -37,6 +37,8 @@ class ProjectService
             timeout: 600,
         );
 
+        $this->ensureEnvironment($tempDir);
+
         return $tempDir;
     }
 
@@ -152,7 +154,7 @@ class ProjectService
         }
 
         // Give the process a moment to start or fail
-        usleep(500_000);
+        usleep(1_000_000);
 
         $status = proc_get_status($process);
 
@@ -216,6 +218,31 @@ class ProjectService
         // Fallback
         if (File::isDirectory($projectPath)) {
             File::deleteDirectory($projectPath);
+        }
+    }
+
+    protected function ensureEnvironment(string $projectPath): void
+    {
+        $envPath = $projectPath.'/.env';
+        $envExamplePath = $projectPath.'/.env.example';
+
+        // Ensure .env exists
+        if (! File::exists($envPath) && File::exists($envExamplePath)) {
+            File::copy($envExamplePath, $envPath);
+        }
+
+        if (! File::exists($envPath)) {
+            throw new \RuntimeException("No .env file found at {$projectPath}. The project template may be misconfigured.");
+        }
+
+        // Ensure APP_KEY is generated
+        $envContent = File::get($envPath);
+
+        if (preg_match('/^APP_KEY=\s*$/m', $envContent) || ! str_contains($envContent, 'APP_KEY=')) {
+            $this->process->runOrFail(
+                $this->process->phpBinary().' artisan key:generate --force',
+                $projectPath,
+            );
         }
     }
 
