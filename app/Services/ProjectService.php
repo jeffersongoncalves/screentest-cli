@@ -128,15 +128,20 @@ class ProjectService
         // Kill any leftover process on this port from a previous run
         $this->killProcessOnPort($port);
 
-        $phpBinary = $this->process->phpBinary();
+        // Use PHP_BINARY (the actual .exe) instead of phpBinary() which may return
+        // a .bat wrapper that causes issues with proc_open on Windows
+        $phpBinary = $this->resolvePhpExecutable();
         $cmd = "{$phpBinary} artisan serve --host={$host} --port={$port}";
 
         $nullFile = PHP_OS_FAMILY === 'Windows' ? 'NUL' : '/dev/null';
-        $stderrLog = str_replace('\\', '/', sys_get_temp_dir()).'/screentest-server-stderr.log';
+        $logDir = str_replace('\\', '/', sys_get_temp_dir()).'/screentest-debug';
+        @mkdir($logDir, 0777, true);
+        $stdoutLog = $logDir.'/server-stdout.log';
+        $stderrLog = $logDir.'/server-stderr.log';
 
         $descriptors = [
             0 => ['file', $nullFile, 'r'],
-            1 => ['file', $nullFile, 'w'],
+            1 => ['file', $stdoutLog, 'w'],
             2 => ['file', $stderrLog, 'w'],
         ];
 
@@ -146,7 +151,30 @@ class ProjectService
             throw new \RuntimeException("Failed to start server with: {$cmd}");
         }
 
-        $this->waitForServer($host, $port, $timeout, $stderrLog);
+        // Give the process a moment to start or fail
+        usleep(500_000);
+
+        $status = proc_get_status($process);
+
+        if (! ($status['running'] ?? false)) {
+            $stdout = is_file($stdoutLog) ? trim((string) file_get_contents($stdoutLog)) : '';
+            $stderr = is_file($stderrLog) ? trim((string) file_get_contents($stderrLog)) : '';
+            $detail = '';
+
+            if ($stdout !== '') {
+                $detail .= "\nServer stdout: {$stdout}";
+            }
+
+            if ($stderr !== '') {
+                $detail .= "\nServer stderr: {$stderr}";
+            }
+
+            throw new \RuntimeException(
+                "Server process exited immediately (exit code: {$status['exitcode']}).{$detail}\nCommand: {$cmd}\nCwd: {$projectPath}"
+            );
+        }
+
+        $this->waitForServer($host, $port, $timeout, $stdoutLog, $stderrLog);
 
         return $process;
     }
@@ -316,7 +344,25 @@ class ProjectService
         }
     }
 
-    protected function waitForServer(string $host, int $port, int $timeout, ?string $stderrLog = null): void
+    protected function resolvePhpExecutable(): string
+    {
+        // On Windows, .bat wrappers cause issues with proc_open (quoting hell with cmd.exe /c).
+        // Use PHP_BINARY which is always the actual .exe path of the running PHP process.
+        if (PHP_OS_FAMILY === 'Windows') {
+            $binary = PHP_BINARY;
+
+            // Quote if path contains spaces
+            if (str_contains($binary, ' ')) {
+                return '"'.$binary.'"';
+            }
+
+            return $binary;
+        }
+
+        return $this->process->phpBinary();
+    }
+
+    protected function waitForServer(string $host, int $port, int $timeout, ?string $stdoutLog = null, ?string $stderrLog = null): void
     {
         $start = time();
 
@@ -334,11 +380,19 @@ class ProjectService
 
         $errorDetail = '';
 
+        if ($stdoutLog && file_exists($stdoutLog)) {
+            $stdout = trim((string) file_get_contents($stdoutLog));
+
+            if ($stdout !== '') {
+                $errorDetail .= "\nServer stdout: {$stdout}";
+            }
+        }
+
         if ($stderrLog && file_exists($stderrLog)) {
             $stderr = trim((string) file_get_contents($stderrLog));
 
             if ($stderr !== '') {
-                $errorDetail = "\nServer stderr: {$stderr}";
+                $errorDetail .= "\nServer stderr: {$stderr}";
             }
         }
 
