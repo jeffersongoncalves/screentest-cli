@@ -8,7 +8,6 @@ use App\DTOs\PluginRegistration;
 use App\DTOs\ScreentestConfig;
 use Illuminate\Process\InvokedProcess;
 use Illuminate\Support\Facades\File;
-use Illuminate\Support\Facades\Http;
 
 class ProjectService
 {
@@ -118,20 +117,43 @@ class ProjectService
         );
     }
 
-    public function startServer(string $projectPath): InvokedProcess
+    /**
+     * @return resource|InvokedProcess
+     */
+    public function startServer(string $projectPath): mixed
     {
         $host = config('screentest.server.host', '127.0.0.1');
         $port = config('screentest.server.port', 8787);
         $timeout = config('screentest.server.startup_timeout', 30);
 
-        $invokedProcess = $this->process->startBackground(
-            $this->process->phpBinary()." artisan serve --host={$host} --port={$port}",
+        $phpBinary = $this->process->phpBinary();
+        $command = "{$phpBinary} artisan serve --host={$host} --port={$port}";
+
+        // Use proc_open for reliable background process on Windows
+        $descriptors = [
+            0 => ['pipe', 'r'],
+            1 => ['pipe', 'w'],
+            2 => ['pipe', 'w'],
+        ];
+
+        $process = proc_open(
+            $command,
+            $descriptors,
+            $pipes,
             $projectPath,
         );
 
+        if (! is_resource($process)) {
+            throw new \RuntimeException("Failed to start server: {$command}");
+        }
+
+        // Make pipes non-blocking so we don't hang
+        stream_set_blocking($pipes[1], false);
+        stream_set_blocking($pipes[2], false);
+
         $this->waitForServer($host, $port, $timeout);
 
-        return $invokedProcess;
+        return $process;
     }
 
     public function cleanup(string $projectPath): void
@@ -257,24 +279,21 @@ class ProjectService
     protected function waitForServer(string $host, int $port, int $timeout): void
     {
         $start = time();
-        $url = "http://{$host}:{$port}";
 
         while ((time() - $start) < $timeout) {
-            try {
-                $response = Http::timeout(2)->get($url);
+            $connection = @fsockopen($host, $port, $errno, $errstr, 2);
 
-                if ($response->successful() || $response->redirect()) {
-                    return;
-                }
-            } catch (\Exception) {
-                // Server not ready yet
+            if ($connection !== false) {
+                fclose($connection);
+
+                return;
             }
 
             usleep(500_000); // 500ms
         }
 
         throw new \RuntimeException(
-            "Server failed to start within {$timeout} seconds at {$url}"
+            "Server failed to start within {$timeout} seconds at http://{$host}:{$port}"
         );
     }
 }
