@@ -21,7 +21,17 @@ class ProjectService
         $tempDir = str_replace('\\', '/', config('screentest.temp_directory'));
 
         if (File::isDirectory($tempDir)) {
-            File::deleteDirectory($tempDir);
+            // Use system rm on Windows — File::deleteDirectory can fail with symlinks
+            if (PHP_OS_FAMILY === 'Windows') {
+                $this->process->run('rmdir /s /q "'.str_replace('/', '\\', $tempDir).'"');
+            } else {
+                $this->process->run("rm -rf {$tempDir}");
+            }
+
+            // Fallback if still exists
+            if (File::isDirectory($tempDir)) {
+                File::deleteDirectory($tempDir);
+            }
         }
 
         $this->process->composerOrFail(
@@ -126,6 +136,17 @@ class ProjectService
 
     public function cleanup(string $projectPath): void
     {
+        if (! File::isDirectory($projectPath)) {
+            return;
+        }
+
+        if (PHP_OS_FAMILY === 'Windows') {
+            $this->process->run('rmdir /s /q "'.str_replace('/', '\\', $projectPath).'"');
+        } else {
+            $this->process->run("rm -rf {$projectPath}");
+        }
+
+        // Fallback
         if (File::isDirectory($projectPath)) {
             File::deleteDirectory($projectPath);
         }
