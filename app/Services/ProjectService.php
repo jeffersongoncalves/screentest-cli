@@ -144,6 +144,7 @@ class ProjectService
         $shortClass = class_basename($plugin->class);
         $useStatement = "use {$plugin->class};";
 
+        // Add use statement
         if (! str_contains($content, $useStatement)) {
             $content = preg_replace(
                 '/(namespace\s+[^;]+;\s*\n)/',
@@ -152,17 +153,52 @@ class ProjectService
             );
         }
 
-        $content = preg_replace(
-            '/(->discoverResources\([^)]*\))/',
-            "$1\n            ->plugin({$shortClass}::make())",
-            $content,
-        );
+        $pluginCall = "->plugin({$shortClass}::make())";
 
-        if (! str_contains($content, "->plugin({$shortClass}::make())")) {
+        // Skip if already registered
+        if (str_contains($content, $pluginCall)) {
+            File::put($providerPath, $content);
+
+            return;
+        }
+
+        // Strategy: insert ->plugin() before ->middleware() or ->authMiddleware()
+        // These are safe anchor points that appear after the panel builder chain setup
+        $anchors = [
+            '->middleware(',
+            '->authMiddleware(',
+            '->pages([',
+            '->widgets([',
+        ];
+
+        $inserted = false;
+
+        foreach ($anchors as $anchor) {
+            $pos = strpos($content, $anchor);
+            if ($pos !== false) {
+                // Find the start of this line to get indentation
+                $lineStart = strrpos(substr($content, 0, $pos), "\n");
+                $lineStart = $lineStart !== false ? $lineStart + 1 : 0;
+                $indent = str_repeat(' ', $pos - $lineStart);
+
+                $content = substr($content, 0, $pos)
+                    .$pluginCall."\n"
+                    .$indent
+                    .substr($content, $pos);
+
+                $inserted = true;
+
+                break;
+            }
+        }
+
+        // Fallback: insert before the last semicolon in the panel method
+        if (! $inserted) {
             $content = preg_replace(
-                '/(->authMiddleware\([^)]*\))/',
-                "$1\n            ->plugin({$shortClass}::make())",
+                '/(return\s+\$panel[\s\S]*?)(;\s*\})/m',
+                "$1\n            {$pluginCall}$2",
                 $content,
+                1,
             );
         }
 
