@@ -24,10 +24,10 @@ class ProjectService
             File::deleteDirectory($tempDir);
         }
 
-        $command = $this->process->phpBinary().' '.$this->process->composerBinary()
-            ." create-project {$config->filakit->kit} {$tempDir} --no-interaction --prefer-dist";
-
-        $this->process->runOrFail($command, timeout: 600);
+        $this->process->composerOrFail(
+            "create-project {$config->filakit->kit} {$tempDir} --no-interaction --prefer-dist",
+            timeout: 600,
+        );
 
         return $tempDir;
     }
@@ -51,15 +51,15 @@ class ProjectService
             json_encode($composerJson, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)."\n",
         );
 
-        $this->process->runOrFail(
-            $this->process->phpBinary().' '.$this->process->composerBinary()." require {$config->plugin->package} @dev --no-interaction",
+        $this->process->composerOrFail(
+            "require {$config->plugin->package} @dev --no-interaction",
             $projectPath,
             timeout: 300,
         );
 
         foreach ($config->install->extraPackages as $package) {
-            $this->process->runOrFail(
-                $this->process->phpBinary().' '.$this->process->composerBinary()." require {$package} --no-interaction",
+            $this->process->composerOrFail(
+                "require {$package} --no-interaction",
                 $projectPath,
                 timeout: 300,
             );

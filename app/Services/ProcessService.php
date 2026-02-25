@@ -16,7 +16,12 @@ class ProcessService
 
     public function composer(string $arguments, ?string $cwd = null, ?int $timeout = 300): \Illuminate\Contracts\Process\ProcessResult
     {
-        return $this->run($this->phpBinary().' '.$this->composerBinary().' '.$arguments, $cwd, $timeout);
+        return $this->run($this->composerBinary().' '.$arguments, $cwd, $timeout);
+    }
+
+    public function composerOrFail(string $arguments, ?string $cwd = null, ?int $timeout = 300): \Illuminate\Contracts\Process\ProcessResult
+    {
+        return $this->runOrFail($this->composerBinary().' '.$arguments, $cwd, $timeout);
     }
 
     public function node(string $arguments, ?string $cwd = null, ?int $timeout = 120): \Illuminate\Contracts\Process\ProcessResult
@@ -69,12 +74,24 @@ class ProcessService
 
     public function phpBinary(): string
     {
-        return config('screentest.php_binary', 'php');
+        $configured = config('screentest.php_binary', 'php');
+
+        if ($configured !== 'php') {
+            return $configured;
+        }
+
+        return $this->detectBinary('php', ['php.bat']) ?? 'php';
     }
 
     public function composerBinary(): string
     {
-        return config('screentest.composer_binary', 'composer');
+        $configured = config('screentest.composer_binary', 'composer');
+
+        if ($configured !== 'composer') {
+            return $configured;
+        }
+
+        return $this->detectBinary('composer', ['composer.bat']) ?? 'composer';
     }
 
     public function nodeBinary(): string
@@ -85,5 +102,34 @@ class ProcessService
     public function pnpmBinary(): string
     {
         return config('screentest.pnpm_binary', 'pnpm');
+    }
+
+    protected function detectBinary(string $name, array $windowsNames = []): ?string
+    {
+        if (PHP_OS_FAMILY !== 'Windows') {
+            return null;
+        }
+
+        // Detect Laravel Herd binaries on Windows
+        $herdBinDir = str_replace('\\', '/', getenv('USERPROFILE') ?: getenv('HOME')).'/.config/herd/bin';
+
+        if (is_dir($herdBinDir)) {
+            foreach ($windowsNames as $winName) {
+                $path = $herdBinDir.'/'.$winName;
+                if (file_exists($path)) {
+                    return '"'.str_replace('/', '\\', $path).'"';
+                }
+            }
+        }
+
+        // Detect from Composer global bin (for composer itself)
+        if ($name === 'composer') {
+            $composerGlobal = str_replace('\\', '/', getenv('USERPROFILE') ?: getenv('HOME')).'/AppData/Roaming/Composer/vendor/bin/composer';
+            if (file_exists($composerGlobal)) {
+                return '"'.str_replace('/', '\\', $composerGlobal).'"';
+            }
+        }
+
+        return null;
     }
 }
