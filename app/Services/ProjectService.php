@@ -6,7 +6,6 @@ namespace App\Services;
 
 use App\DTOs\PluginRegistration;
 use App\DTOs\ScreentestConfig;
-use Illuminate\Process\InvokedProcess;
 use Illuminate\Support\Facades\File;
 
 class ProjectService
@@ -118,42 +117,60 @@ class ProjectService
     }
 
     /**
-     * @return resource|InvokedProcess
+     * @return resource
      */
     public function startServer(string $projectPath): mixed
     {
         $host = config('screentest.server.host', '127.0.0.1');
-        $port = config('screentest.server.port', 8787);
-        $timeout = config('screentest.server.startup_timeout', 30);
+        $port = (int) config('screentest.server.port', 8787);
+        $timeout = (int) config('screentest.server.startup_timeout', 30);
+
+        // Kill any leftover process on this port from a previous run
+        $this->killProcessOnPort($port);
 
         $phpBinary = $this->process->phpBinary();
-        $command = "{$phpBinary} artisan serve --host={$host} --port={$port}";
+        $cmd = "{$phpBinary} artisan serve --host={$host} --port={$port}";
 
-        // Use proc_open for reliable background process on Windows
+        $nullFile = PHP_OS_FAMILY === 'Windows' ? 'NUL' : '/dev/null';
+        $stderrLog = str_replace('\\', '/', sys_get_temp_dir()).'/screentest-server-stderr.log';
+
         $descriptors = [
-            0 => ['pipe', 'r'],
-            1 => ['pipe', 'w'],
-            2 => ['pipe', 'w'],
+            0 => ['file', $nullFile, 'r'],
+            1 => ['file', $nullFile, 'w'],
+            2 => ['file', $stderrLog, 'w'],
         ];
 
-        $process = proc_open(
-            $command,
-            $descriptors,
-            $pipes,
-            $projectPath,
-        );
+        $process = proc_open($cmd, $descriptors, $pipes, $projectPath);
 
         if (! is_resource($process)) {
-            throw new \RuntimeException("Failed to start server: {$command}");
+            throw new \RuntimeException("Failed to start server with: {$cmd}");
         }
 
-        // Make pipes non-blocking so we don't hang
-        stream_set_blocking($pipes[1], false);
-        stream_set_blocking($pipes[2], false);
-
-        $this->waitForServer($host, $port, $timeout);
+        $this->waitForServer($host, $port, $timeout, $stderrLog);
 
         return $process;
+    }
+
+    public function stopServer(mixed $serverProcess): void
+    {
+        $port = (int) config('screentest.server.port', 8787);
+
+        try {
+            if (is_resource($serverProcess)) {
+                $status = proc_get_status($serverProcess);
+
+                if ($status['running'] ?? false) {
+                    proc_terminate($serverProcess);
+                }
+
+                proc_close($serverProcess);
+            }
+        } catch (\Throwable) {
+            // Ignore
+        }
+
+        // Always kill by port as fallback (proc_terminate may not kill child processes on Windows)
+        $this->killProcessOnPort($port);
     }
 
     public function cleanup(string $projectPath): void
@@ -276,7 +293,30 @@ class ProjectService
         return null;
     }
 
-    protected function waitForServer(string $host, int $port, int $timeout): void
+    protected function killProcessOnPort(int $port): void
+    {
+        if (PHP_OS_FAMILY === 'Windows') {
+            exec("netstat -ano | findstr :{$port}", $output);
+
+            $pids = [];
+
+            foreach ($output ?? [] as $line) {
+                if (preg_match('/LISTENING\s+(\d+)/', $line, $matches)) {
+                    $pids[(int) $matches[1]] = true;
+                }
+            }
+
+            foreach (array_keys($pids) as $pid) {
+                if ($pid > 0) {
+                    exec("taskkill /F /T /PID {$pid} 2>NUL");
+                }
+            }
+        } else {
+            exec("lsof -ti:{$port} 2>/dev/null | xargs kill -9 2>/dev/null");
+        }
+    }
+
+    protected function waitForServer(string $host, int $port, int $timeout, ?string $stderrLog = null): void
     {
         $start = time();
 
@@ -292,8 +332,18 @@ class ProjectService
             usleep(500_000); // 500ms
         }
 
+        $errorDetail = '';
+
+        if ($stderrLog && file_exists($stderrLog)) {
+            $stderr = trim((string) file_get_contents($stderrLog));
+
+            if ($stderr !== '') {
+                $errorDetail = "\nServer stderr: {$stderr}";
+            }
+        }
+
         throw new \RuntimeException(
-            "Server failed to start within {$timeout} seconds at http://{$host}:{$port}"
+            "Server failed to start within {$timeout} seconds at http://{$host}:{$port}{$errorDetail}"
         );
     }
 }

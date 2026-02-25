@@ -122,16 +122,7 @@ class RunCommand extends Command
         } finally {
             // Stop server
             if ($serverProcess) {
-                try {
-                    if (is_resource($serverProcess)) {
-                        proc_terminate($serverProcess);
-                        proc_close($serverProcess);
-                    } else {
-                        $serverProcess->signal(SIGTERM);
-                    }
-                } catch (\Throwable) {
-                    // Server may already be stopped
-                }
+                $project->stopServer($serverProcess);
             }
 
             // Cleanup
