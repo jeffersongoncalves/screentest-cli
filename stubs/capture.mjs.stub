@@ -29,12 +29,26 @@ async function main() {
         { name: 'prefers-color-scheme', value: theme },
       ]);
 
-      // Login
+      // Login (session cookies are shared across pages in the same browser,
+      // so subsequent themes may already be authenticated and redirect to dashboard)
       await page.goto(`${config.baseUrl}/admin/login`, { waitUntil: 'networkidle0' });
-      await page.type('[name="data.email"]', config.user.email);
-      await page.type('[name="data.password"]', config.user.password);
-      await page.click('button[type="submit"]');
-      await page.waitForNavigation({ waitUntil: 'networkidle0' });
+
+      const needsLogin = !page.url().includes('/admin/login') ? false
+        : !!(await page.$('input[type="email"]') || await page.$('[name="data.email"]'));
+
+      if (needsLogin) {
+        const emailSelector = (await page.$('[name="data.email"]'))
+          ? '[name="data.email"]'
+          : 'input[type="email"]';
+        const passwordSelector = (await page.$('[name="data.password"]'))
+          ? '[name="data.password"]'
+          : 'input[type="password"]';
+
+        await page.type(emailSelector, config.user.email);
+        await page.type(passwordSelector, config.user.password);
+        await page.click('button[type="submit"]');
+        await page.waitForNavigation({ waitUntil: 'networkidle0' });
+      }
 
       for (const screenshot of config.screenshots) {
         try {

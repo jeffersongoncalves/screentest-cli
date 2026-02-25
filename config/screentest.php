@@ -36,7 +36,25 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | Development Server
+    | Laravel Herd Integration
+    |--------------------------------------------------------------------------
+    |
+    | When enabled, projects are created inside the Herd directory and served
+    | automatically via http://{dirname}.{tld} — no server process needed.
+    |
+    | 'auto' = detect Herd availability, true = force Herd, false = use php -S
+    |
+    */
+
+    'herd' => [
+        'enabled' => env('SCREENTEST_HERD_ENABLED', 'auto'),
+        'directory' => env('SCREENTEST_HERD_DIR', null),
+        'tld' => env('SCREENTEST_HERD_TLD', null),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Development Server (fallback when Herd is not available)
     |--------------------------------------------------------------------------
     */
 

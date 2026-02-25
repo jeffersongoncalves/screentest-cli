@@ -71,17 +71,25 @@ class RunCommand extends Command
                 });
             }
 
-            // Step 3: Start server
-            $this->task('Starting development server', function () use ($project, $projectPath, &$serverProcess) {
-                $serverProcess = $project->startServer($projectPath);
-            });
+            // Step 3: Server (conditional)
+            if ($project->needsServer($projectPath)) {
+                $this->task('Starting development server', function () use ($project, $projectPath, &$serverProcess) {
+                    $serverProcess = $project->startServer($projectPath);
+                });
+            } else {
+                $this->task('Waiting for Herd to serve project', function () use ($project, $projectPath) {
+                    $project->waitForHerd($projectPath);
+                });
+            }
 
             // Step 4: Capture
+            $baseUrl = $project->getBaseUrl($projectPath);
+
             if (! $this->option('skip-capture')) {
                 $results = [];
 
-                $this->task('Capturing screenshots', function () use ($capture, $config, $projectPath, $pluginPath, &$results) {
-                    $results = $capture->capture($config, $projectPath, $pluginPath);
+                $this->task('Capturing screenshots', function () use ($capture, $config, $projectPath, $pluginPath, $baseUrl, &$results) {
+                    $results = $capture->capture($config, $projectPath, $pluginPath, $baseUrl);
                 });
 
                 $this->newLine();

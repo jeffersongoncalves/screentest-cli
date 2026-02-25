@@ -7,6 +7,7 @@ namespace App\Commands;
 use App\Concerns\LoadsConfig;
 use App\DTOs\CaptureResult;
 use App\Services\CaptureService;
+use App\Services\ProjectService;
 use Illuminate\Support\Facades\Http;
 use LaravelZero\Framework\Commands\Command;
 
@@ -34,7 +35,7 @@ class CaptureCommand extends Command
     /**
      * Execute the console command.
      */
-    public function handle(CaptureService $captureService): int
+    public function handle(CaptureService $captureService, ProjectService $projectService): int
     {
         $config = $this->loadConfig($this->option('path'));
         $pluginPath = $this->resolvePluginPath($this->option('path'));
@@ -75,9 +76,7 @@ class CaptureCommand extends Command
         }
 
         // Verify server is running
-        $host = config('screentest.server.host', '127.0.0.1');
-        $port = config('screentest.server.port', 8787);
-        $baseUrl = "http://{$host}:{$port}";
+        $baseUrl = $projectService->getBaseUrl($projectPath);
 
         $this->info("Verifying server at {$baseUrl}...");
 
@@ -106,7 +105,7 @@ class CaptureCommand extends Command
         $this->newLine();
 
         try {
-            $results = $captureService->capture($config, $projectPath, $pluginPath);
+            $results = $captureService->capture($config, $projectPath, $pluginPath, $baseUrl);
         } catch (\Exception $e) {
             $this->error("Capture failed: {$e->getMessage()}");
 

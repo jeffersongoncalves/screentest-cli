@@ -22,11 +22,11 @@ class CaptureService
      *
      * @return array<CaptureResult>
      */
-    public function capture(ScreentestConfig $config, string $projectPath, string $pluginPath): array
+    public function capture(ScreentestConfig $config, string $projectPath, string $pluginPath, ?string $baseUrl = null): array
     {
         $this->installDependencies($projectPath);
 
-        $this->generateCaptureScript($config, $projectPath);
+        $this->generateCaptureScript($config, $projectPath, $baseUrl);
 
         $results = $this->executeCaptureScript($projectPath);
 
@@ -36,8 +36,27 @@ class CaptureService
     protected function installDependencies(string $projectPath): void
     {
         $packageJsonPath = $projectPath.'/package.json';
+        $requiredDeps = [
+            'puppeteer' => '^24.0.0',
+            'sharp' => '^0.33.0',
+        ];
 
-        if (! File::exists($packageJsonPath)) {
+        if (File::exists($packageJsonPath)) {
+            // Add puppeteer/sharp to existing package.json if missing
+            $packageJson = json_decode(File::get($packageJsonPath), true) ?? [];
+            $changed = false;
+
+            foreach ($requiredDeps as $pkg => $version) {
+                if (! isset($packageJson['dependencies'][$pkg]) && ! isset($packageJson['devDependencies'][$pkg])) {
+                    $packageJson['dependencies'][$pkg] = $version;
+                    $changed = true;
+                }
+            }
+
+            if ($changed) {
+                File::put($packageJsonPath, json_encode($packageJson, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)."\n");
+            }
+        } else {
             $stubPath = base_path('stubs/package.json.stub');
 
             if (File::exists($stubPath)) {
@@ -45,22 +64,28 @@ class CaptureService
             } else {
                 File::put($packageJsonPath, json_encode([
                     'private' => true,
-                    'dependencies' => [
-                        'puppeteer' => '^24.0.0',
-                        'sharp' => '^0.33.0',
-                    ],
+                    'dependencies' => $requiredDeps,
                 ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)."\n");
             }
         }
 
         $this->process->pnpm('install', $projectPath, timeout: 300);
+
+        // Ensure Chromium is downloaded (pnpm doesn't run postinstall scripts by default)
+        $this->process->run(
+            $this->process->pnpmBinary().' exec puppeteer browsers install chrome',
+            $projectPath,
+            timeout: 300,
+        );
     }
 
-    protected function generateCaptureScript(ScreentestConfig $config, string $projectPath): string
+    protected function generateCaptureScript(ScreentestConfig $config, string $projectPath, ?string $baseUrl = null): string
     {
-        $host = config('screentest.server.host', '127.0.0.1');
-        $port = config('screentest.server.port', 8787);
-        $baseUrl = "http://{$host}:{$port}";
+        if ($baseUrl === null) {
+            $host = config('screentest.server.host', '127.0.0.1');
+            $port = config('screentest.server.port', 8787);
+            $baseUrl = "http://{$host}:{$port}";
+        }
 
         $outputDir = $projectPath.'/screenshots';
         $navigationTimeout = config('screentest.capture.navigation_timeout', 30000);
@@ -250,12 +275,26 @@ async function main() {
         { name: 'prefers-color-scheme', value: theme },
       ]);
 
-      // Login
+      // Login (session cookies are shared across pages in the same browser,
+      // so subsequent themes may already be authenticated and redirect to dashboard)
       await page.goto(`\${config.baseUrl}/admin/login`, { waitUntil: 'networkidle0' });
-      await page.type('[name="data.email"]', config.user.email);
-      await page.type('[name="data.password"]', config.user.password);
-      await page.click('button[type="submit"]');
-      await page.waitForNavigation({ waitUntil: 'networkidle0' });
+
+      const needsLogin = !page.url().includes('/admin/login') ? false
+        : !!(await page.\$('input[type="email"]') || await page.\$('[name="data.email"]'));
+
+      if (needsLogin) {
+        const emailSelector = (await page.\$('[name="data.email"]'))
+          ? '[name="data.email"]'
+          : 'input[type="email"]';
+        const passwordSelector = (await page.\$('[name="data.password"]'))
+          ? '[name="data.password"]'
+          : 'input[type="password"]';
+
+        await page.type(emailSelector, config.user.email);
+        await page.type(passwordSelector, config.user.password);
+        await page.click('button[type="submit"]');
+        await page.waitForNavigation({ waitUntil: 'networkidle0' });
+      }
 
       for (const screenshot of config.screenshots) {
         try {

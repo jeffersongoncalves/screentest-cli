@@ -10,13 +10,15 @@ use Illuminate\Support\Facades\File;
 
 class ProjectService
 {
+    protected ?array $herdConfigCache = null;
+
     public function __construct(
         protected ProcessService $process,
     ) {}
 
     public function create(ScreentestConfig $config): string
     {
-        $tempDir = str_replace('\\', '/', config('screentest.temp_directory'));
+        $tempDir = $this->resolveTempDirectory();
 
         if (File::isDirectory($tempDir)) {
             // Use system rm on Windows — File::deleteDirectory can fail with symlinks
@@ -118,6 +120,11 @@ class ProjectService
         );
     }
 
+    public function needsServer(string $projectPath): bool
+    {
+        return ! $this->isHerdEnabled();
+    }
+
     /**
      * @return resource
      */
@@ -130,10 +137,12 @@ class ProjectService
         // Kill any leftover process on this port from a previous run
         $this->killProcessOnPort($port);
 
-        // Use PHP_BINARY (the actual .exe) instead of phpBinary() which may return
-        // a .bat wrapper that causes issues with proc_open on Windows
         $phpBinary = $this->resolvePhpExecutable();
-        $cmd = "{$phpBinary} artisan serve --host={$host} --port={$port}";
+        $publicDir = str_replace('\\', '/', $projectPath).'/public';
+        $router = str_replace('\\', '/', $projectPath).'/server.php';
+
+        // Use php -S directly instead of artisan serve to avoid proc_open issues
+        $cmd = "{$phpBinary} -S {$host}:{$port} {$router} -t {$publicDir}";
 
         $nullFile = PHP_OS_FAMILY === 'Windows' ? 'NUL' : '/dev/null';
         $logDir = str_replace('\\', '/', sys_get_temp_dir()).'/screentest-debug';
@@ -181,6 +190,31 @@ class ProjectService
         return $process;
     }
 
+    public function waitForHerd(string $projectPath): void
+    {
+        $baseUrl = $this->getBaseUrl($projectPath);
+        $timeout = (int) config('screentest.server.startup_timeout', 30);
+        $start = time();
+
+        while ((time() - $start) < $timeout) {
+            try {
+                $headers = @get_headers($baseUrl, true);
+
+                if ($headers !== false) {
+                    return;
+                }
+            } catch (\Throwable) {
+                // ignore
+            }
+
+            usleep(500_000); // 500ms
+        }
+
+        throw new \RuntimeException(
+            "Herd site failed to respond within {$timeout} seconds at {$baseUrl}"
+        );
+    }
+
     public function stopServer(mixed $serverProcess): void
     {
         $port = (int) config('screentest.server.port', 8787);
@@ -221,6 +255,136 @@ class ProjectService
         }
     }
 
+    public function getBaseUrl(string $projectPath): string
+    {
+        if ($this->isHerdEnabled()) {
+            $herdConfig = $this->getHerdConfig();
+            $dirname = basename($projectPath);
+            $tld = $herdConfig['tld'] ?? 'test';
+
+            return "http://{$dirname}.{$tld}";
+        }
+
+        $host = config('screentest.server.host', '127.0.0.1');
+        $port = config('screentest.server.port', 8787);
+
+        return "http://{$host}:{$port}";
+    }
+
+    public function isHerdEnabled(): bool
+    {
+        $setting = config('screentest.herd.enabled', 'auto');
+
+        if ($setting === false || $setting === 'false') {
+            return false;
+        }
+
+        if ($setting === true || $setting === 'true') {
+            $available = $this->isHerdAvailable();
+
+            if (! $available) {
+                throw new \RuntimeException(
+                    'Herd is configured as enabled but could not be detected. Check your Herd installation or set SCREENTEST_HERD_ENABLED=false.'
+                );
+            }
+
+            return true;
+        }
+
+        // auto
+        return $this->isHerdAvailable();
+    }
+
+    public function isHerdAvailable(): bool
+    {
+        return $this->getHerdConfig() !== null;
+    }
+
+    /**
+     * @return array{directory: string, tld: string}|null
+     */
+    public function getHerdConfig(): ?array
+    {
+        if ($this->herdConfigCache !== null) {
+            return $this->herdConfigCache ?: null;
+        }
+
+        // Check if user configured directory/tld explicitly
+        $configDir = config('screentest.herd.directory');
+        $configTld = config('screentest.herd.tld');
+
+        if ($configDir && is_dir($configDir)) {
+            $this->herdConfigCache = [
+                'directory' => str_replace('\\', '/', $configDir),
+                'tld' => $configTld ?: 'test',
+            ];
+
+            return $this->herdConfigCache;
+        }
+
+        // Auto-detect from Herd's valet config
+        $home = str_replace('\\', '/', getenv('USERPROFILE') ?: getenv('HOME') ?: '');
+        $valetConfigPath = $home.'/.config/herd/config/valet/config.json';
+
+        if (! file_exists($valetConfigPath)) {
+            $this->herdConfigCache = [];
+
+            return null;
+        }
+
+        $valetConfig = json_decode((string) file_get_contents($valetConfigPath), true);
+
+        if (! is_array($valetConfig) || empty($valetConfig['paths'])) {
+            $this->herdConfigCache = [];
+
+            return null;
+        }
+
+        // Prefer the ~/Herd directory over other parked paths (like valet/Sites)
+        $herdDir = null;
+        $homePath = str_replace('\\', '/', $home);
+
+        foreach ($valetConfig['paths'] as $path) {
+            $normalized = str_replace('\\', '/', $path);
+
+            if ($normalized === $homePath.'/Herd') {
+                $herdDir = $normalized;
+
+                break;
+            }
+        }
+
+        // Fallback: use the last parked path
+        if ($herdDir === null) {
+            $herdDir = str_replace('\\', '/', end($valetConfig['paths']));
+        }
+
+        if (! is_dir($herdDir)) {
+            $this->herdConfigCache = [];
+
+            return null;
+        }
+
+        $this->herdConfigCache = [
+            'directory' => $herdDir,
+            'tld' => $configTld ?: ($valetConfig['tld'] ?? 'test'),
+        ];
+
+        return $this->herdConfigCache;
+    }
+
+    protected function resolveTempDirectory(): string
+    {
+        if ($this->isHerdEnabled()) {
+            $herdConfig = $this->getHerdConfig();
+            $dirname = basename(str_replace('\\', '/', config('screentest.temp_directory')));
+
+            return $herdConfig['directory'].'/'.$dirname;
+        }
+
+        return str_replace('\\', '/', config('screentest.temp_directory'));
+    }
+
     protected function ensureEnvironment(string $projectPath): void
     {
         $envPath = $projectPath.'/.env';
@@ -235,14 +399,47 @@ class ProjectService
             throw new \RuntimeException("No .env file found at {$projectPath}. The project template may be misconfigured.");
         }
 
-        // Ensure APP_KEY is generated
+        // Set APP_URL based on serving mode
+        $baseUrl = $this->getBaseUrl($projectPath);
         $envContent = File::get($envPath);
 
+        if (preg_match('/^APP_URL=.*$/m', $envContent)) {
+            $envContent = preg_replace('/^APP_URL=.*$/m', "APP_URL={$baseUrl}", $envContent);
+        } else {
+            $envContent .= "\nAPP_URL={$baseUrl}\n";
+        }
+
+        // Disable debugbar for clean screenshots
+        if (preg_match('/^DEBUGBAR_ENABLED=.*$/m', $envContent)) {
+            $envContent = preg_replace('/^DEBUGBAR_ENABLED=.*$/m', 'DEBUGBAR_ENABLED=false', $envContent);
+        } else {
+            $envContent .= "\nDEBUGBAR_ENABLED=false\n";
+        }
+
+        File::put($envPath, $envContent);
+
+        // Ensure APP_KEY is generated
         if (preg_match('/^APP_KEY=\s*$/m', $envContent) || ! str_contains($envContent, 'APP_KEY=')) {
             $this->process->runOrFail(
                 $this->process->phpBinary().' artisan key:generate --force',
                 $projectPath,
             );
+        }
+
+        // Set theme mode to System so prefers-color-scheme works for dark/light captures
+        $filakitConfigPath = $projectPath.'/config/filakit.php';
+
+        if (File::exists($filakitConfigPath)) {
+            $filakitConfig = File::get($filakitConfigPath);
+
+            if (str_contains($filakitConfig, 'ThemeMode::Light') || str_contains($filakitConfig, 'ThemeMode::Dark')) {
+                $filakitConfig = str_replace(
+                    ['ThemeMode::Light', 'ThemeMode::Dark'],
+                    'ThemeMode::System',
+                    $filakitConfig,
+                );
+                File::put($filakitConfigPath, $filakitConfig);
+            }
         }
     }
 
@@ -373,12 +570,9 @@ class ProjectService
 
     protected function resolvePhpExecutable(): string
     {
-        // On Windows, .bat wrappers cause issues with proc_open (quoting hell with cmd.exe /c).
-        // Use PHP_BINARY which is always the actual .exe path of the running PHP process.
         if (PHP_OS_FAMILY === 'Windows') {
             $binary = PHP_BINARY;
 
-            // Quote if path contains spaces
             if (str_contains($binary, ' ')) {
                 return '"'.$binary.'"';
             }
