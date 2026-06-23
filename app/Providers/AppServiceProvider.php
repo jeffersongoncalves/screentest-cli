@@ -12,6 +12,7 @@ use App\Services\ProjectService;
 use App\Services\ReadmeService;
 use App\Services\SeedService;
 use Illuminate\Support\ServiceProvider;
+use JeffersonGoncalves\LaravelZero\SelfUpdate\PharUpdater;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -36,6 +37,13 @@ class AppServiceProvider extends ServiceProvider
         $this->app->singleton(CaptureService::class, function ($app) {
             return new CaptureService($app->make(ProcessService::class));
         });
+
+        $this->app->singleton(PharUpdater::class, fn () => new PharUpdater(
+            githubRepo: 'jeffersongoncalves/screentest-cli',
+            assetName: 'screentest.phar',
+            tempPrefix: 'screentest_',
+            currentVersion: (string) config('app.version', 'unreleased'),
+        ));
     }
 
     public function boot(): void
