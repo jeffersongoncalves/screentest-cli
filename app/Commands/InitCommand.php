@@ -6,6 +6,7 @@ namespace App\Commands;
 
 use App\Concerns\ResolvesPluginPath;
 use App\DTOs\PluginAnalysis;
+use App\Enums\FilamentVersion;
 use App\Services\ConfigService;
 use App\Services\PluginAnalyzerService;
 use LaravelZero\Framework\Commands\Command;
@@ -102,9 +103,9 @@ class InitCommand extends Command
 
         // Determine Filakit based on detected Filament version
         $filakitKit = match ($analysis->filamentVersion) {
-            \App\Enums\FilamentVersion::V3 => 'filakitphp/basev3',
-            \App\Enums\FilamentVersion::V4 => 'filakitphp/basev4',
-            \App\Enums\FilamentVersion::V5 => 'filakitphp/basev5',
+            FilamentVersion::V3 => 'filakitphp/basev3',
+            FilamentVersion::V4 => 'filakitphp/basev4',
+            FilamentVersion::V5 => 'filakitphp/basev5',
             default => 'filakitphp/basev5',
         };
 

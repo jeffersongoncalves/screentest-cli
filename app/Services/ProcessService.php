@@ -5,41 +5,43 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Exceptions\ProjectSetupException;
+use Illuminate\Contracts\Process\ProcessResult;
+use Illuminate\Process\InvokedProcess;
 use Illuminate\Support\Facades\Process;
 
 class ProcessService
 {
-    public function php(string $arguments, ?string $cwd = null, ?int $timeout = 120): \Illuminate\Contracts\Process\ProcessResult
+    public function php(string $arguments, ?string $cwd = null, ?int $timeout = 120): ProcessResult
     {
         return $this->run($this->phpBinary().' '.$arguments, $cwd, $timeout);
     }
 
-    public function composer(string $arguments, ?string $cwd = null, ?int $timeout = 300): \Illuminate\Contracts\Process\ProcessResult
+    public function composer(string $arguments, ?string $cwd = null, ?int $timeout = 300): ProcessResult
     {
         return $this->run($this->composerBinary().' '.$arguments, $cwd, $timeout);
     }
 
-    public function composerOrFail(string $arguments, ?string $cwd = null, ?int $timeout = 300): \Illuminate\Contracts\Process\ProcessResult
+    public function composerOrFail(string $arguments, ?string $cwd = null, ?int $timeout = 300): ProcessResult
     {
         return $this->runOrFail($this->composerBinary().' '.$arguments, $cwd, $timeout);
     }
 
-    public function node(string $arguments, ?string $cwd = null, ?int $timeout = 120): \Illuminate\Contracts\Process\ProcessResult
+    public function node(string $arguments, ?string $cwd = null, ?int $timeout = 120): ProcessResult
     {
         return $this->run($this->nodeBinary().' '.$arguments, $cwd, $timeout);
     }
 
-    public function pnpm(string $arguments, ?string $cwd = null, ?int $timeout = 300): \Illuminate\Contracts\Process\ProcessResult
+    public function pnpm(string $arguments, ?string $cwd = null, ?int $timeout = 300): ProcessResult
     {
         return $this->run($this->pnpmBinary().' '.$arguments, $cwd, $timeout);
     }
 
-    public function artisan(string $arguments, string $cwd, ?int $timeout = 120): \Illuminate\Contracts\Process\ProcessResult
+    public function artisan(string $arguments, string $cwd, ?int $timeout = 120): ProcessResult
     {
         return $this->php('artisan '.$arguments, $cwd, $timeout);
     }
 
-    public function run(string $command, ?string $cwd = null, ?int $timeout = 120): \Illuminate\Contracts\Process\ProcessResult
+    public function run(string $command, ?string $cwd = null, ?int $timeout = 120): ProcessResult
     {
         $process = Process::timeout($timeout);
 
@@ -50,7 +52,7 @@ class ProcessService
         return $process->run($command);
     }
 
-    public function runOrFail(string $command, ?string $cwd = null, ?int $timeout = 120): \Illuminate\Contracts\Process\ProcessResult
+    public function runOrFail(string $command, ?string $cwd = null, ?int $timeout = 120): ProcessResult
     {
         $result = $this->run($command, $cwd, $timeout);
 
@@ -61,7 +63,7 @@ class ProcessService
         return $result;
     }
 
-    public function startBackground(string $command, ?string $cwd = null): \Illuminate\Process\InvokedProcess
+    public function startBackground(string $command, ?string $cwd = null): InvokedProcess
     {
         $process = Process::timeout(0);
 

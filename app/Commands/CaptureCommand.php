@@ -6,6 +6,8 @@ namespace App\Commands;
 
 use App\Concerns\LoadsConfig;
 use App\DTOs\CaptureResult;
+use App\DTOs\OutputConfig;
+use App\DTOs\ScreentestConfig;
 use App\Services\CaptureService;
 use App\Services\ProjectService;
 use Illuminate\Support\Facades\Http;
@@ -60,13 +62,13 @@ class CaptureCommand extends Command
                 return self::FAILURE;
             }
 
-            $config = new \App\DTOs\ScreentestConfig(
+            $config = new ScreentestConfig(
                 plugin: $config->plugin,
                 filakit: $config->filakit,
                 install: $config->install,
                 seed: $config->seed,
                 screenshots: $config->screenshots,
-                output: new \App\DTOs\OutputConfig(
+                output: new OutputConfig(
                     directory: $config->output->directory,
                     themes: array_values($filteredThemes),
                     format: $config->output->format,
