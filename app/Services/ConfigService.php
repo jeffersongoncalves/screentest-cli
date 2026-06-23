@@ -7,25 +7,29 @@ namespace App\Services;
 use App\DTOs\ScreentestConfig;
 use App\Exceptions\ConfigNotFoundException;
 use App\Exceptions\ConfigValidationException;
+use JeffersonGoncalves\LaravelZero\JsonConfig\JsonConfigService;
+use JeffersonGoncalves\LaravelZero\JsonConfig\Scopes\PerProjectScope;
 
 class ConfigService
 {
     public function load(string $pluginPath): ScreentestConfig
     {
-        $configPath = $pluginPath.'/screentest.json';
+        $config = $this->config($pluginPath);
+        $configPath = $config->path();
 
         if (! file_exists($configPath)) {
             throw ConfigNotFoundException::atPath($configPath);
         }
 
-        $json = file_get_contents($configPath);
-        $data = json_decode($json, true);
+        $raw = (string) file_get_contents($configPath);
 
-        if (json_last_error() !== JSON_ERROR_NONE) {
+        if (trim($raw) !== '' && json_decode($raw, true) === null && json_last_error() !== JSON_ERROR_NONE) {
             throw ConfigValidationException::withErrors([
                 'Invalid JSON: '.json_last_error_msg(),
             ]);
         }
+
+        $data = $config->all();
 
         $this->validate($data);
 
@@ -34,16 +38,25 @@ class ConfigService
 
     public function save(string $pluginPath, array $data): void
     {
-        $configPath = $pluginPath.'/screentest.json';
+        $config = $this->config($pluginPath);
 
-        $json = json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+        foreach (array_keys($config->all()) as $existing) {
+            $config->forget((string) $existing);
+        }
 
-        file_put_contents($configPath, $json."\n");
+        foreach ($data as $key => $value) {
+            $config->set((string) $key, $value);
+        }
     }
 
     public function exists(string $pluginPath): bool
     {
-        return file_exists($pluginPath.'/screentest.json');
+        return file_exists($this->config($pluginPath)->path());
+    }
+
+    protected function config(string $pluginPath): JsonConfigService
+    {
+        return new JsonConfigService(new PerProjectScope($pluginPath, 'screentest.json'));
     }
 
     protected function validate(array $data): void

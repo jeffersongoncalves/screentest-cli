@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "c00223f63c2e59e8829c1ca997a1bb20",
+    "content-hash": "bc0ad568708414e05ee310fa146a7cbf",
     "packages": [],
     "packages-dev": [
         {
@@ -2021,6 +2021,114 @@
                 "source": "https://github.com/Jean85/pretty-package-versions/tree/2.1.1"
             },
             "time": "2025-03-19T14:43:43+00:00"
+        },
+        {
+            "name": "jeffersongoncalves/laravel-zero-console",
+            "version": "v1.0.0",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/jeffersongoncalves/laravel-zero-console.git",
+                "reference": "c24ee11ef9eec9cc4a589205ece04ceb3bc622b7"
+            },
+            "dist": {
+                "type": "zip",
+                "url": "https://api.github.com/repos/jeffersongoncalves/laravel-zero-console/zipball/c24ee11ef9eec9cc4a589205ece04ceb3bc622b7",
+                "reference": "c24ee11ef9eec9cc4a589205ece04ceb3bc622b7",
+                "shasum": ""
+            },
+            "require": {
+                "illuminate/console": "^11.0|^12.0",
+                "php": "^8.2"
+            },
+            "require-dev": {
+                "laravel/pint": "^1.25",
+                "mockery/mockery": "^1.6",
+                "pestphp/pest": "^3.8|^4.1"
+            },
+            "type": "library",
+            "autoload": {
+                "psr-4": {
+                    "JeffersonGoncalves\\LaravelZero\\Console\\": "src/"
+                }
+            },
+            "notification-url": "https://packagist.org/downloads/",
+            "license": [
+                "MIT"
+            ],
+            "authors": [
+                {
+                    "name": "Jefferson Goncalves",
+                    "email": "jeffersongoncalves@users.noreply.github.com"
+                }
+            ],
+            "description": "Reusable traits for Laravel Zero commands: output formatting (tables, state colorization, dates), standardized API error handling, and cwd/argument path resolution.",
+            "homepage": "https://github.com/jeffersongoncalves/laravel-zero-console",
+            "keywords": [
+                "cli",
+                "console",
+                "formatting",
+                "laravel-zero",
+                "table",
+                "traits"
+            ],
+            "support": {
+                "issues": "https://github.com/jeffersongoncalves/laravel-zero-console/issues",
+                "source": "https://github.com/jeffersongoncalves/laravel-zero-console/tree/v1.0.0"
+            },
+            "time": "2026-06-23T00:47:16+00:00"
+        },
+        {
+            "name": "jeffersongoncalves/laravel-zero-json-config",
+            "version": "v1.0.0",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/jeffersongoncalves/laravel-zero-json-config.git",
+                "reference": "fd3838dc45da2167f0fcb2c696da93f8888f5ac0"
+            },
+            "dist": {
+                "type": "zip",
+                "url": "https://api.github.com/repos/jeffersongoncalves/laravel-zero-json-config/zipball/fd3838dc45da2167f0fcb2c696da93f8888f5ac0",
+                "reference": "fd3838dc45da2167f0fcb2c696da93f8888f5ac0",
+                "shasum": ""
+            },
+            "require": {
+                "php": "^8.2"
+            },
+            "require-dev": {
+                "laravel/pint": "^1.25",
+                "mockery/mockery": "^1.6",
+                "pestphp/pest": "^3.8|^4.1"
+            },
+            "type": "library",
+            "autoload": {
+                "psr-4": {
+                    "JeffersonGoncalves\\LaravelZero\\JsonConfig\\": "src/"
+                }
+            },
+            "notification-url": "https://packagist.org/downloads/",
+            "license": [
+                "MIT"
+            ],
+            "authors": [
+                {
+                    "name": "Jefferson Goncalves",
+                    "email": "jeffersongoncalves@users.noreply.github.com"
+                }
+            ],
+            "description": "Base JSON configuration service for CLIs, with scope strategies (global, per-repo, per-project), get/set/all and 0600 writes.",
+            "homepage": "https://github.com/jeffersongoncalves/laravel-zero-json-config",
+            "keywords": [
+                "cli",
+                "config",
+                "configuration",
+                "json",
+                "laravel-zero"
+            ],
+            "support": {
+                "issues": "https://github.com/jeffersongoncalves/laravel-zero-json-config/issues",
+                "source": "https://github.com/jeffersongoncalves/laravel-zero-json-config/tree/v1.0.0"
+            },
+            "time": "2026-06-23T00:47:19+00:00"
         },
         {
             "name": "jolicode/jolinotif",

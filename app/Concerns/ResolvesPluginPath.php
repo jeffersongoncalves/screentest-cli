@@ -2,13 +2,17 @@
 
 namespace App\Concerns;
 
+use JeffersonGoncalves\LaravelZero\Console\ResolvesPath;
+
 trait ResolvesPluginPath
 {
+    use ResolvesPath;
+
     protected function resolvePluginPath(?string $path = null): string
     {
-        $resolved = $path ? realpath($path) : getcwd();
+        $resolved = $this->resolvePath($path);
 
-        if (! $resolved || ! is_dir($resolved)) {
+        if (! is_dir($resolved)) {
             throw new \RuntimeException("Plugin path does not exist: {$path}");
         }
 
