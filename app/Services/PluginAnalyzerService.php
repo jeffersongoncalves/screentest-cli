@@ -29,7 +29,8 @@ class PluginAnalyzerService
         $pluginClass = $this->detectPluginClass($pluginPath);
         $package = $composerData['name'] ?? 'unknown/unknown';
         $filamentVersion = $this->detectFilamentVersion($composerData);
-        $resources = $this->detectResources($pluginPath);
+        $psr4 = $composerData['autoload']['psr-4'] ?? [];
+        $resources = $this->detectResources($pluginPath, $psr4);
 
         return new PluginAnalysis(
             pluginClass: $pluginClass ?? 'Unknown\\Plugin',
@@ -90,9 +91,10 @@ class PluginAnalyzerService
     /**
      * Detect Filament Resource classes within the plugin's src directory.
      *
+     * @param  array<string, string>  $psr4
      * @return ResourceInfo[]
      */
-    protected function detectResources(string $pluginPath): array
+    protected function detectResources(string $pluginPath, array $psr4 = []): array
     {
         $srcPath = $pluginPath.'/src';
 
@@ -138,6 +140,18 @@ class PluginAnalyzerService
             $modelShortName = $model ? class_basename($model) : str_replace('Resource', '', $className);
             $fields = $this->parseResourceFields($file->getRealPath());
 
+            // Most Filament plugins split the form schema into a dedicated
+            // `SomethingForm::configure($schema)` class rather than inlining
+            // field components directly in the Resource — follow that one
+            // level of delegation so `fields` isn't empty for those plugins.
+            $delegatedFields = $this->resolveDelegatedFormFields($content, $pluginPath, $psr4);
+
+            $byName = [];
+            foreach ([...$fields, ...$delegatedFields] as $field) {
+                $byName[$field->name] = $field;
+            }
+            $fields = array_values($byName);
+
             $resources[] = new ResourceInfo(
                 class: $fqcn,
                 model: $model ?? 'App\\Models\\'.$modelShortName,
@@ -147,6 +161,124 @@ class PluginAnalyzerService
         }
 
         return $resources;
+    }
+
+    /**
+     * Follow a `SomeForm::configure($schema)` (or `SomeForm::form($schema)`) call inside
+     * a Resource's `form()` method to the class it delegates to, and parse fields from
+     * that class's file too. Handles both fully-qualified and `use`-imported short names.
+     *
+     * @param  array<string, string>  $psr4
+     * @return FieldInfo[]
+     */
+    protected function resolveDelegatedFormFields(string $resourceContent, string $pluginPath, array $psr4): array
+    {
+        if ($psr4 === []) {
+            return [];
+        }
+
+        if (! preg_match('/function\s+form\s*\([^)]*\)[^{]*\{/', $resourceContent, $formMatch, PREG_OFFSET_CAPTURE)) {
+            return [];
+        }
+
+        $formBody = $this->extractBracedBody($resourceContent, $formMatch[0][1] + strlen($formMatch[0][0]) - 1);
+
+        if (! preg_match('/([A-Za-z0-9_\\\\]+)::(?:configure|form)\s*\(/', $formBody, $callMatch)) {
+            return [];
+        }
+
+        $reference = $callMatch[1];
+        $fqcn = $this->resolveClassReference($reference, $resourceContent);
+
+        if ($fqcn === null) {
+            return [];
+        }
+
+        $path = $this->fqcnToPath($fqcn, $pluginPath, $psr4);
+
+        if ($path === null || ! is_file($path)) {
+            return [];
+        }
+
+        return $this->parseResourceFields($path);
+    }
+
+    /**
+     * Resolve a class reference used in a method call (e.g. "ApiKeyForm" from
+     * `ApiKeyForm::configure(...)`) to a fully-qualified class name, using the
+     * containing file's `use` imports when the reference isn't already qualified.
+     */
+    private function resolveClassReference(string $reference, string $fileContent): ?string
+    {
+        $reference = ltrim($reference, '\\');
+
+        if (str_contains($reference, '\\')) {
+            return $reference;
+        }
+
+        if (preg_match('/use\s+([A-Za-z0-9_\\\\]+\\\\'.preg_quote($reference, '/').')\s*;/', $fileContent, $useMatch)) {
+            return $useMatch[1];
+        }
+
+        return null;
+    }
+
+    /**
+     * Resolve a fully-qualified class name to an absolute file path using a
+     * PSR-4 `namespace prefix => directory` map from composer.json, matching
+     * the longest applicable prefix (as Composer's own autoloader does).
+     *
+     * @param  array<string, string>  $psr4
+     */
+    private function fqcnToPath(string $fqcn, string $pluginPath, array $psr4): ?string
+    {
+        $fqcn = ltrim($fqcn, '\\');
+        $bestPrefix = null;
+        $bestDir = null;
+
+        foreach ($psr4 as $prefix => $dir) {
+            if (! str_starts_with($fqcn, $prefix)) {
+                continue;
+            }
+
+            if ($bestPrefix === null || strlen($prefix) > strlen($bestPrefix)) {
+                $bestPrefix = $prefix;
+                $bestDir = $dir;
+            }
+        }
+
+        if ($bestPrefix === null || $bestDir === null) {
+            return null;
+        }
+
+        $relativeClass = substr($fqcn, strlen($bestPrefix));
+        $relativePath = str_replace('\\', '/', $relativeClass).'.php';
+
+        return rtrim($pluginPath, '/').'/'.trim($bestDir, '/').'/'.$relativePath;
+    }
+
+    /**
+     * Given the offset of an opening `{`, return the content between it and its
+     * matching closing `}` (brace-depth aware, so nested blocks don't confuse it).
+     */
+    private function extractBracedBody(string $content, int $openBraceOffset): string
+    {
+        $depth = 0;
+        $length = strlen($content);
+
+        for ($i = $openBraceOffset; $i < $length; $i++) {
+            if ($content[$i] === '{') {
+                $depth++;
+            } elseif ($content[$i] === '}') {
+                $depth--;
+
+                if ($depth === 0) {
+                    return substr($content, $openBraceOffset + 1, $i - $openBraceOffset - 1);
+                }
+            }
+        }
+
+        return substr($content, $openBraceOffset + 1);
     }
 
     /**
