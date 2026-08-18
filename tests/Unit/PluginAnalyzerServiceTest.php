@@ -1,5 +1,6 @@
 <?php
 
+use App\Enums\FilamentVersion;
 use App\Services\PluginAnalyzerService;
 
 function makeFixturePlugin(): string
@@ -131,7 +132,7 @@ it('still detects inline fields and the Filament v3 version constraint (no deleg
 
     $analysis = (new PluginAnalyzerService)->analyze($pluginPath);
 
-    expect($analysis->filamentVersion)->toBe(\App\Enums\FilamentVersion::V3)
+    expect($analysis->filamentVersion)->toBe(FilamentVersion::V3)
         ->and($analysis->resources)->toHaveCount(1);
 
     $fieldNames = array_map(fn ($field) => $field->name, $analysis->resources[0]->fields);
