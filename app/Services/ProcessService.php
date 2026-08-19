@@ -31,9 +31,12 @@ class ProcessService
         return $this->run($this->nodeBinary().' '.$arguments, $cwd, $timeout);
     }
 
-    public function pnpm(string $arguments, ?string $cwd = null, ?int $timeout = 300): ProcessResult
+    /**
+     * @param  array<string, string>  $env
+     */
+    public function pnpm(string $arguments, ?string $cwd = null, ?int $timeout = 300, array $env = []): ProcessResult
     {
-        return $this->run($this->pnpmBinary().' '.$arguments, $cwd, $timeout);
+        return $this->run($this->pnpmBinary().' '.$arguments, $cwd, $timeout, $env);
     }
 
     public function artisan(string $arguments, string $cwd, ?int $timeout = 120): ProcessResult
@@ -41,12 +44,19 @@ class ProcessService
         return $this->php('artisan '.$arguments, $cwd, $timeout);
     }
 
-    public function run(string $command, ?string $cwd = null, ?int $timeout = 120): ProcessResult
+    /**
+     * @param  array<string, string>  $env
+     */
+    public function run(string $command, ?string $cwd = null, ?int $timeout = 120, array $env = []): ProcessResult
     {
         $process = Process::timeout($timeout);
 
         if ($cwd) {
             $process = $process->path($cwd);
+        }
+
+        if ($env !== []) {
+            $process = $process->env($env);
         }
 
         return $process->run($command);

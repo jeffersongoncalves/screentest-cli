@@ -71,7 +71,13 @@ class CaptureService
 
         $this->ensurePnpmBuildsAllowed($projectPath);
 
-        $installResult = $this->process->pnpm('install', $projectPath, timeout: 300);
+        // capture.mjs only ever launches full Chrome (headless: 'new'), never
+        // chrome-headless-shell, so skip that extra download — it doubles the
+        // postinstall's chance of hitting an interrupted/corrupt cache entry
+        // for a binary this tool never uses.
+        $puppeteerEnv = ['PUPPETEER_SKIP_CHROME_HEADLESS_SHELL_DOWNLOAD' => 'true'];
+
+        $installResult = $this->process->pnpm('install', $projectPath, timeout: 300, env: $puppeteerEnv);
 
         if (! $installResult->successful()) {
             throw new CaptureException(
