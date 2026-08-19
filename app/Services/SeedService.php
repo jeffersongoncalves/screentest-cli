@@ -52,7 +52,10 @@ class SeedService
         $this->generateMasterSeeder($seederClasses, $projectPath);
 
         // 5. Run the master seeder
-        $this->process->artisan('db:seed --class=ScreentestSeeder', $projectPath);
+        $this->process->runOrFail(
+            $this->process->phpBinary().' artisan db:seed --class=ScreentestSeeder --force',
+            $projectPath,
+        );
     }
 
     protected function generateUserSeeder(UserConfig $user, string $projectPath): void
