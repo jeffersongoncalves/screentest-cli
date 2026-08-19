@@ -10,22 +10,29 @@ use App\DTOs\ScreenshotConfig;
 use App\DTOs\ScreentestConfig;
 use App\Exceptions\CaptureException;
 use Illuminate\Support\Facades\File;
-use Symfony\Component\Process\Exception\ProcessTimedOutException;
 
 class CaptureService
 {
+    protected const CONTAINER_OUTPUT_DIR = '/app/screenshots';
+
+    protected const CONTAINER_SCRIPT_PATH = '/app/capture.mjs';
+
     public function __construct(
         protected ProcessService $process,
     ) {}
 
     /**
-     * Capture screenshots using Puppeteer.
+     * Capture screenshots using Puppeteer, run inside a Docker container that
+     * already has Chrome, puppeteer and sharp baked in. Installing those on
+     * the host proved unreliable across machines (pnpm build-script
+     * allowlisting, antivirus interference, corporate firewalls hanging the
+     * chrome-for-testing download) — the container sidesteps all of it.
      *
      * @return array<CaptureResult>
      */
     public function capture(ScreentestConfig $config, string $projectPath, string $pluginPath, ?string $baseUrl = null): array
     {
-        $this->installDependencies($projectPath);
+        $this->ensureDockerImage();
 
         $this->generateCaptureScript($config, $projectPath, $baseUrl);
 
@@ -34,163 +41,24 @@ class CaptureService
         return $this->copyToPlugin($results, $config, $projectPath, $pluginPath);
     }
 
-    protected function installDependencies(string $projectPath): void
+    protected function ensureDockerImage(): void
     {
-        $packageJsonPath = $projectPath.'/package.json';
-        $requiredDeps = [
-            'puppeteer' => '^24.0.0',
-            'sharp' => '^0.33.0',
-        ];
+        $image = config('screentest.docker_image', 'screentest-cli-capture:1');
 
-        if (File::exists($packageJsonPath)) {
-            // Add puppeteer/sharp to existing package.json if missing
-            $packageJson = json_decode(File::get($packageJsonPath), true) ?? [];
-            $changed = false;
+        $inspect = $this->process->docker('image inspect '.$image, timeout: 30);
 
-            foreach ($requiredDeps as $pkg => $version) {
-                if (! isset($packageJson['dependencies'][$pkg]) && ! isset($packageJson['devDependencies'][$pkg])) {
-                    $packageJson['dependencies'][$pkg] = $version;
-                    $changed = true;
-                }
-            }
-
-            if ($changed) {
-                File::put($packageJsonPath, json_encode($packageJson, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)."\n");
-            }
-        } else {
-            $stubPath = base_path('stubs/package.json.stub');
-
-            if (File::exists($stubPath)) {
-                File::copy($stubPath, $packageJsonPath);
-            } else {
-                File::put($packageJsonPath, json_encode([
-                    'private' => true,
-                    'dependencies' => $requiredDeps,
-                ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)."\n");
-            }
-        }
-
-        $this->ensurePnpmBuildsAllowed($projectPath);
-
-        // Puppeteer's own postinstall script has no retry/cleanup for a
-        // corrupt cache entry (a folder left behind by an interrupted
-        // download, with no executable inside it) — it just fails outright
-        // and takes the whole `pnpm install` down with it. installChrome()
-        // below already handles that case, so skip postinstall's download
-        // entirely and let it be the only thing that ever fetches a browser.
-        $puppeteerEnv = ['PUPPETEER_SKIP_DOWNLOAD' => 'true'];
-
-        $installResult = $this->process->pnpm('install', $projectPath, timeout: 300, env: $puppeteerEnv);
-
-        if (! $installResult->successful()) {
-            throw new CaptureException(
-                'pnpm install failed: '.$installResult->errorOutput().$installResult->output()
-            );
-        }
-
-        $this->installChrome($projectPath);
-    }
-
-    /**
-     * A chrome download interrupted by network hiccups or antivirus scanning
-     * can leave a build folder on disk with no executable inside it. Puppeteer
-     * then treats that folder as "already installed" and reports success
-     * without ever placing the binary, so the exit code alone isn't trustworthy
-     * here — the printed executable path is checked to exist on disk too.
-     *
-     * This shells out via a plain `node script.mjs` (like generateCaptureScript
-     * does), not `pnpm exec puppeteer browsers install chrome` — on Windows,
-     * PHP's Process loses the nested pnpm.cmd → node subprocess's stdout often
-     * enough (empty output, exit 0, nothing installed) that the command isn't
-     * trustworthy for this.
-     */
-    protected function installChrome(string $projectPath): void
-    {
-        $this->generateInstallChromeScript($projectPath);
-
-        $result = $this->runInstallChromeScript($projectPath);
-
-        if (! $this->chromeExecutableExists($result)) {
-            $output = $result->output().$result->errorOutput();
-
-            if (preg_match('#chrome[\\\\/]win64-([0-9.]+)#', $output, $matches)) {
-                $cacheDir = getenv('PUPPETEER_CACHE_DIR') ?: (getenv('USERPROFILE') ?: getenv('HOME')).'/.cache/puppeteer';
-                File::deleteDirectory(str_replace('\\', '/', $cacheDir).'/chrome/win64-'.$matches[1]);
-            }
-
-            $result = $this->runInstallChromeScript($projectPath);
-        }
-
-        if (! $this->chromeExecutableExists($result)) {
-            throw new CaptureException(
-                'Chrome install failed: '.$result->errorOutput().$result->output()
-            );
-        }
-    }
-
-    protected function runInstallChromeScript(string $projectPath)
-    {
-        try {
-            return $this->process->node('install-chrome.mjs', $projectPath, timeout: 300);
-        } catch (ProcessTimedOutException) {
-            throw new CaptureException(
-                'Chrome install timed out after 300s — the download to storage.googleapis.com may be blocked or hanging on this network.'
-            );
-        }
-    }
-
-    protected function generateInstallChromeScript(string $projectPath): void
-    {
-        // `@puppeteer/browsers` and `puppeteer-core` aren't direct dependencies
-        // of this project, so pnpm's strict node_modules would refuse to
-        // resolve them if imported directly (ERR_MODULE_NOT_FOUND). Going
-        // through puppeteer's own re-exported install script instead: `puppeteer`
-        // *is* a direct dependency, and its internal imports resolve fine from
-        // its own package folder regardless of how strict our own project is.
-        $script = <<<'JS'
-            import puppeteer from 'puppeteer';
-            import { downloadBrowsers } from 'puppeteer/lib/esm/puppeteer/node/install.js';
-
-            process.env.PUPPETEER_SKIP_CHROME_HEADLESS_SHELL_DOWNLOAD ??= 'true';
-
-            await downloadBrowsers();
-
-            console.log(puppeteer.executablePath());
-            JS;
-
-        File::put($projectPath.'/install-chrome.mjs', $script);
-    }
-
-    protected function chromeExecutableExists($result): bool
-    {
-        return $result->successful() && File::isFile(trim($result->output()));
-    }
-
-    /**
-     * pnpm 10+ blocks dependency postinstall/build scripts unless explicitly
-     * allowlisted, otherwise `pnpm install` errors out before node_modules
-     * is populated (ERR_PNPM_IGNORED_BUILDS).
-     */
-    protected function ensurePnpmBuildsAllowed(string $projectPath): void
-    {
-        $workspacePath = $projectPath.'/pnpm-workspace.yaml';
-
-        if (File::exists($workspacePath)) {
-            $contents = File::get($workspacePath);
-
-            if (! str_contains($contents, 'allowBuilds:')) {
-                File::append($workspacePath, "\nallowBuilds:\n  puppeteer: true\n  sharp: true\n");
-            }
-
+        if ($inspect->successful()) {
             return;
         }
 
-        $stubPath = base_path('stubs/pnpm-workspace.yaml.stub');
+        $context = base_path('stubs/docker');
 
-        if (File::exists($stubPath)) {
-            File::copy($stubPath, $workspacePath);
-        } else {
-            File::put($workspacePath, "allowBuilds:\n  puppeteer: true\n  sharp: true\n");
+        $build = $this->process->docker('build -t '.$image.' "'.$context.'"', timeout: 600);
+
+        if (! $build->successful()) {
+            throw new CaptureException(
+                'Docker image build failed: '.$build->errorOutput().$build->output()
+            );
         }
     }
 
@@ -198,11 +66,18 @@ class CaptureService
     {
         if ($baseUrl === null) {
             $host = config('screentest.server.host', '127.0.0.1');
+
+            // The capture container can't reach the host machine via
+            // 127.0.0.1/localhost — Docker Desktop exposes it as
+            // host.docker.internal instead.
+            if (in_array($host, ['127.0.0.1', 'localhost'], true)) {
+                $host = 'host.docker.internal';
+            }
+
             $port = config('screentest.server.port', 8787);
             $baseUrl = "http://{$host}:{$port}";
         }
 
-        $outputDir = $projectPath.'/screenshots';
         $navigationTimeout = config('screentest.capture.navigation_timeout', 30000);
 
         $configData = [
@@ -240,7 +115,7 @@ class CaptureService
                 'deviceScaleFactor' => 3,
             ],
             'format' => $config->output->format->value,
-            'outputDir' => str_replace('\\', '/', $outputDir),
+            'outputDir' => self::CONTAINER_OUTPUT_DIR,
             'navigationTimeout' => $navigationTimeout,
         ];
 
@@ -266,11 +141,27 @@ class CaptureService
      */
     protected function executeCaptureScript(string $projectPath): array
     {
-        $result = $this->process->node('capture.mjs', $projectPath, timeout: 300);
+        $scriptPath = $projectPath.'/capture.mjs';
+        $screenshotsDir = $projectPath.'/screenshots';
+
+        File::ensureDirectoryExists($screenshotsDir);
+
+        $image = config('screentest.docker_image', 'screentest-cli-capture:1');
+
+        $command = sprintf(
+            'run --rm -v "%s:%s" -v "%s:%s" %s',
+            $scriptPath,
+            self::CONTAINER_SCRIPT_PATH,
+            $screenshotsDir,
+            self::CONTAINER_OUTPUT_DIR,
+            $image,
+        );
+
+        $result = $this->process->docker($command, timeout: 300);
 
         if (! $result->successful()) {
             throw new CaptureException(
-                'Capture script failed: '.$result->errorOutput()
+                'Capture script failed: '.$result->errorOutput().$result->output()
             );
         }
 

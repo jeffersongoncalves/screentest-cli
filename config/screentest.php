@@ -36,6 +36,21 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Docker Capture Image
+    |--------------------------------------------------------------------------
+    |
+    | Screenshots are captured inside a Docker container with Chrome and
+    | puppeteer/sharp baked in (built from stubs/docker/), instead of
+    | installing them on the host — this sidesteps host-specific chrome
+    | download failures (antivirus, corporate firewalls, pnpm quirks).
+    |
+    */
+
+    'docker_binary' => env('SCREENTEST_DOCKER_BINARY', 'docker'),
+    'docker_image' => env('SCREENTEST_DOCKER_IMAGE', 'screentest-cli-capture:1'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Laravel Herd Integration
     |--------------------------------------------------------------------------
     |

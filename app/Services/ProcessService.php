@@ -44,6 +44,11 @@ class ProcessService
         return $this->php('artisan '.$arguments, $cwd, $timeout);
     }
 
+    public function docker(string $arguments, ?int $timeout = 300): ProcessResult
+    {
+        return $this->run($this->dockerBinary().' '.$arguments, null, $timeout);
+    }
+
     /**
      * @param  array<string, string>  $env
      */
@@ -114,6 +119,11 @@ class ProcessService
     public function pnpmBinary(): string
     {
         return config('screentest.pnpm_binary', 'pnpm');
+    }
+
+    public function dockerBinary(): string
+    {
+        return config('screentest.docker_binary', 'docker');
     }
 
     protected function detectBinary(string $name, array $windowsNames = []): ?string
