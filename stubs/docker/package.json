@@ -2,6 +2,6 @@
   "private": true,
   "dependencies": {
     "puppeteer": "^24.0.0",
-    "sharp": "^0.33.0"
+    "sharp": "^0.35.3"
   }
 }
