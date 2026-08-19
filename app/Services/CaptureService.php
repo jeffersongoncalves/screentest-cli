@@ -96,12 +96,18 @@ class CaptureService
      * then treats that folder as "already installed" and reports success
      * without ever placing the binary, so the exit code alone isn't trustworthy
      * here — the printed executable path is checked to exist on disk too.
+     *
+     * This shells out via a plain `node script.mjs` (like generateCaptureScript
+     * does), not `pnpm exec puppeteer browsers install chrome` — on Windows,
+     * PHP's Process loses the nested pnpm.cmd → node subprocess's stdout often
+     * enough (empty output, exit 0, nothing installed) that the command isn't
+     * trustworthy for this.
      */
     protected function installChrome(string $projectPath): void
     {
-        $command = $this->process->pnpmBinary().' exec puppeteer browsers install chrome --format "{{path}}"';
+        $this->generateInstallChromeScript($projectPath);
 
-        $result = $this->process->run($command, $projectPath, timeout: 300);
+        $result = $this->runInstallChromeScript($projectPath);
 
         if (! $this->chromeExecutableExists($result)) {
             $output = $result->output().$result->errorOutput();
@@ -111,7 +117,7 @@ class CaptureService
                 File::deleteDirectory(str_replace('\\', '/', $cacheDir).'/chrome/win64-'.$matches[1]);
             }
 
-            $result = $this->process->run($command, $projectPath, timeout: 300);
+            $result = $this->runInstallChromeScript($projectPath);
         }
 
         if (! $this->chromeExecutableExists($result)) {
@@ -119,6 +125,39 @@ class CaptureService
                 'Chrome install failed: '.$result->errorOutput().$result->output()
             );
         }
+    }
+
+    protected function runInstallChromeScript(string $projectPath)
+    {
+        try {
+            return $this->process->node('install-chrome.mjs', $projectPath, timeout: 300);
+        } catch (\Symfony\Component\Process\Exception\ProcessTimedOutException) {
+            throw new CaptureException(
+                'Chrome install timed out after 300s — the download to storage.googleapis.com may be blocked or hanging on this network.'
+            );
+        }
+    }
+
+    protected function generateInstallChromeScript(string $projectPath): void
+    {
+        // `@puppeteer/browsers` and `puppeteer-core` aren't direct dependencies
+        // of this project, so pnpm's strict node_modules would refuse to
+        // resolve them if imported directly (ERR_MODULE_NOT_FOUND). Going
+        // through puppeteer's own re-exported install script instead: `puppeteer`
+        // *is* a direct dependency, and its internal imports resolve fine from
+        // its own package folder regardless of how strict our own project is.
+        $script = <<<'JS'
+            import puppeteer from 'puppeteer';
+            import { downloadBrowsers } from 'puppeteer/lib/esm/puppeteer/node/install.js';
+
+            process.env.PUPPETEER_SKIP_CHROME_HEADLESS_SHELL_DOWNLOAD ??= 'true';
+
+            await downloadBrowsers();
+
+            console.log(puppeteer.executablePath());
+            JS;
+
+        File::put($projectPath.'/install-chrome.mjs', $script);
     }
 
     protected function chromeExecutableExists($result): bool
