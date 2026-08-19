@@ -10,6 +10,7 @@ use App\DTOs\ScreenshotConfig;
 use App\DTOs\ScreentestConfig;
 use App\Exceptions\CaptureException;
 use Illuminate\Support\Facades\File;
+use Symfony\Component\Process\Exception\ProcessTimedOutException;
 
 class CaptureService
 {
@@ -131,7 +132,7 @@ class CaptureService
     {
         try {
             return $this->process->node('install-chrome.mjs', $projectPath, timeout: 300);
-        } catch (\Symfony\Component\Process\Exception\ProcessTimedOutException) {
+        } catch (ProcessTimedOutException) {
             throw new CaptureException(
                 'Chrome install timed out after 300s — the download to storage.googleapis.com may be blocked or hanging on this network.'
             );
