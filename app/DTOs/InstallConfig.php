@@ -9,6 +9,7 @@ readonly class InstallConfig
         public array $plugins = [],
         public array $publish = [],
         public array $postInstallCommands = ['migrate'],
+        public array $env = [],
     ) {}
 
     public static function fromArray(array $data): self
@@ -21,6 +22,7 @@ readonly class InstallConfig
             ) : [],
             publish: $data['publish'] ?? [],
             postInstallCommands: $data['post_install_commands'] ?? ['migrate'],
+            env: $data['env'] ?? [],
         );
     }
 }

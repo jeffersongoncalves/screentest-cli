@@ -39,7 +39,7 @@ class ProjectService
             timeout: 600,
         );
 
-        $this->ensureEnvironment($tempDir);
+        $this->ensureEnvironment($tempDir, $config);
 
         return $tempDir;
     }
@@ -385,7 +385,7 @@ class ProjectService
         return str_replace('\\', '/', config('screentest.temp_directory'));
     }
 
-    protected function ensureEnvironment(string $projectPath): void
+    protected function ensureEnvironment(string $projectPath, ScreentestConfig $config): void
     {
         $envPath = $projectPath.'/.env';
         $envExamplePath = $projectPath.'/.env.example';
@@ -414,6 +414,19 @@ class ProjectService
             $envContent = preg_replace('/^DEBUGBAR_ENABLED=.*$/m', 'DEBUGBAR_ENABLED=false', $envContent);
         } else {
             $envContent .= "\nDEBUGBAR_ENABLED=false\n";
+        }
+
+        // Apply plugin-specific env overrides (e.g. feature flags that gate
+        // which Filament resources get registered) from screentest.json's
+        // install.env — see AGENTS.md.
+        foreach ($config->install->env as $key => $value) {
+            $pattern = '/^'.preg_quote($key, '/').'=.*$/m';
+
+            if (preg_match($pattern, $envContent)) {
+                $envContent = preg_replace($pattern, "{$key}={$value}", $envContent);
+            } else {
+                $envContent .= "\n{$key}={$value}\n";
+            }
         }
 
         File::put($envPath, $envContent);
