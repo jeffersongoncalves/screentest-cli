@@ -323,7 +323,8 @@ async function main() {
 
       for (const screenshot of config.screenshots) {
         try {
-          await page.goto(`\${config.baseUrl}/\${screenshot.url}`, { waitUntil: 'networkidle0', timeout: config.navigationTimeout });
+          const targetUrl = `\${config.baseUrl}/\${screenshot.url}`.replace(/([^:]\/)\/+/g, '\$1');
+          await page.goto(targetUrl, { waitUntil: 'networkidle0', timeout: config.navigationTimeout });
 
           // Execute before actions
           for (const action of (screenshot.before || [])) {
