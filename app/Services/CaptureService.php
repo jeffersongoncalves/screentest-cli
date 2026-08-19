@@ -34,11 +34,41 @@ class CaptureService
     {
         $this->ensureDockerImage();
 
-        $this->generateCaptureScript($config, $projectPath, $baseUrl);
+        [$resolvedBaseUrl, $extraHost] = $this->resolveDockerBaseUrl($baseUrl);
 
-        $results = $this->executeCaptureScript($projectPath);
+        $this->generateCaptureScript($config, $projectPath, $resolvedBaseUrl);
+
+        $results = $this->executeCaptureScript($projectPath, $extraHost);
 
         return $this->copyToPlugin($results, $config, $projectPath, $pluginPath);
+    }
+
+    /**
+     * The capture container can't reach the host machine via 127.0.0.1 or
+     * localhost — that's the container itself — so those get swapped for
+     * Docker Desktop's host-access hostname. A named host (Herd's *.test
+     * domains) is virtual-host routed by nginx via the Host header though,
+     * so the URL must stay untouched or Herd serves the wrong site — instead
+     * the container's DNS is taught to resolve that exact name to the host
+     * via `docker run --add-host`.
+     *
+     * @return array{0: string, 1: ?string} [baseUrl, extraHost for --add-host]
+     */
+    protected function resolveDockerBaseUrl(?string $baseUrl): array
+    {
+        if ($baseUrl === null) {
+            $host = config('screentest.server.host', '127.0.0.1');
+            $port = config('screentest.server.port', 8787);
+            $baseUrl = "http://{$host}:{$port}";
+        }
+
+        $host = parse_url($baseUrl, PHP_URL_HOST) ?? '127.0.0.1';
+
+        if ($host === 'localhost' || filter_var($host, FILTER_VALIDATE_IP)) {
+            return [str_replace($host, 'host.docker.internal', $baseUrl), null];
+        }
+
+        return [$baseUrl, $host];
     }
 
     protected function ensureDockerImage(): void
@@ -62,22 +92,8 @@ class CaptureService
         }
     }
 
-    protected function generateCaptureScript(ScreentestConfig $config, string $projectPath, ?string $baseUrl = null): string
+    protected function generateCaptureScript(ScreentestConfig $config, string $projectPath, string $baseUrl): string
     {
-        if ($baseUrl === null) {
-            $host = config('screentest.server.host', '127.0.0.1');
-
-            // The capture container can't reach the host machine via
-            // 127.0.0.1/localhost — Docker Desktop exposes it as
-            // host.docker.internal instead.
-            if (in_array($host, ['127.0.0.1', 'localhost'], true)) {
-                $host = 'host.docker.internal';
-            }
-
-            $port = config('screentest.server.port', 8787);
-            $baseUrl = "http://{$host}:{$port}";
-        }
-
         $navigationTimeout = config('screentest.capture.navigation_timeout', 30000);
 
         $configData = [
@@ -139,7 +155,7 @@ class CaptureService
     /**
      * @return array<CaptureResult>
      */
-    protected function executeCaptureScript(string $projectPath): array
+    protected function executeCaptureScript(string $projectPath, ?string $extraHost = null): array
     {
         $scriptPath = $projectPath.'/capture.mjs';
         $screenshotsDir = $projectPath.'/screenshots';
@@ -148,8 +164,11 @@ class CaptureService
 
         $image = config('screentest.docker_image', 'screentest-cli-capture:1');
 
+        $addHostFlag = $extraHost !== null ? ' --add-host '.$extraHost.':host-gateway' : '';
+
         $command = sprintf(
-            'run --rm -v "%s:%s" -v "%s:%s" %s',
+            'run --rm%s -v "%s:%s" -v "%s:%s" %s',
+            $addHostFlag,
             $scriptPath,
             self::CONTAINER_SCRIPT_PATH,
             $screenshotsDir,
