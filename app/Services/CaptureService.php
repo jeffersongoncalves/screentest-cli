@@ -69,14 +69,82 @@ class CaptureService
             }
         }
 
-        $this->process->pnpm('install', $projectPath, timeout: 300);
+        $this->ensurePnpmBuildsAllowed($projectPath);
+
+        $installResult = $this->process->pnpm('install', $projectPath, timeout: 300);
+
+        if (! $installResult->successful()) {
+            throw new CaptureException(
+                'pnpm install failed: '.$installResult->errorOutput().$installResult->output()
+            );
+        }
 
         // Ensure Chromium is downloaded (pnpm doesn't run postinstall scripts by default)
-        $this->process->run(
-            $this->process->pnpmBinary().' exec puppeteer browsers install chrome',
-            $projectPath,
-            timeout: 300,
-        );
+        $this->installChrome($projectPath);
+    }
+
+    /**
+     * A chrome download interrupted by network hiccups or antivirus scanning
+     * can leave a build folder on disk with no executable inside it. Puppeteer
+     * then treats that folder as "already installed" and reports success
+     * without ever placing the binary, so the exit code alone isn't trustworthy
+     * here — the printed executable path is checked to exist on disk too.
+     */
+    protected function installChrome(string $projectPath): void
+    {
+        $command = $this->process->pnpmBinary().' exec puppeteer browsers install chrome --format "{{path}}"';
+
+        $result = $this->process->run($command, $projectPath, timeout: 300);
+
+        if (! $this->chromeExecutableExists($result)) {
+            $output = $result->output().$result->errorOutput();
+
+            if (preg_match('#chrome[\\\\/]win64-([0-9.]+)#', $output, $matches)) {
+                $cacheDir = getenv('PUPPETEER_CACHE_DIR') ?: (getenv('USERPROFILE') ?: getenv('HOME')).'/.cache/puppeteer';
+                File::deleteDirectory(str_replace('\\', '/', $cacheDir).'/chrome/win64-'.$matches[1]);
+            }
+
+            $result = $this->process->run($command, $projectPath, timeout: 300);
+        }
+
+        if (! $this->chromeExecutableExists($result)) {
+            throw new CaptureException(
+                'Chrome install failed: '.$result->errorOutput().$result->output()
+            );
+        }
+    }
+
+    protected function chromeExecutableExists($result): bool
+    {
+        return $result->successful() && File::isFile(trim($result->output()));
+    }
+
+    /**
+     * pnpm 10+ blocks dependency postinstall/build scripts unless explicitly
+     * allowlisted, otherwise `pnpm install` errors out before node_modules
+     * is populated (ERR_PNPM_IGNORED_BUILDS).
+     */
+    protected function ensurePnpmBuildsAllowed(string $projectPath): void
+    {
+        $workspacePath = $projectPath.'/pnpm-workspace.yaml';
+
+        if (File::exists($workspacePath)) {
+            $contents = File::get($workspacePath);
+
+            if (! str_contains($contents, 'allowBuilds:')) {
+                File::append($workspacePath, "\nallowBuilds:\n  puppeteer: true\n  sharp: true\n");
+            }
+
+            return;
+        }
+
+        $stubPath = base_path('stubs/pnpm-workspace.yaml.stub');
+
+        if (File::exists($stubPath)) {
+            File::copy($stubPath, $workspacePath);
+        } else {
+            File::put($workspacePath, "allowBuilds:\n  puppeteer: true\n  sharp: true\n");
+        }
     }
 
     protected function generateCaptureScript(ScreentestConfig $config, string $projectPath, ?string $baseUrl = null): string
