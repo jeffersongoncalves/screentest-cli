@@ -71,11 +71,13 @@ class CaptureService
 
         $this->ensurePnpmBuildsAllowed($projectPath);
 
-        // capture.mjs only ever launches full Chrome (headless: 'new'), never
-        // chrome-headless-shell, so skip that extra download — it doubles the
-        // postinstall's chance of hitting an interrupted/corrupt cache entry
-        // for a binary this tool never uses.
-        $puppeteerEnv = ['PUPPETEER_SKIP_CHROME_HEADLESS_SHELL_DOWNLOAD' => 'true'];
+        // Puppeteer's own postinstall script has no retry/cleanup for a
+        // corrupt cache entry (a folder left behind by an interrupted
+        // download, with no executable inside it) — it just fails outright
+        // and takes the whole `pnpm install` down with it. installChrome()
+        // below already handles that case, so skip postinstall's download
+        // entirely and let it be the only thing that ever fetches a browser.
+        $puppeteerEnv = ['PUPPETEER_SKIP_DOWNLOAD' => 'true'];
 
         $installResult = $this->process->pnpm('install', $projectPath, timeout: 300, env: $puppeteerEnv);
 
@@ -85,7 +87,6 @@ class CaptureService
             );
         }
 
-        // Ensure Chromium is downloaded (pnpm doesn't run postinstall scripts by default)
         $this->installChrome($projectPath);
     }
 
