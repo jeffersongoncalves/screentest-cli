@@ -170,6 +170,14 @@ class InitCommand extends Command
             $this->newLine();
         }
 
+        if (! empty($analysis->pages)) {
+            $this->info('Detected '.count($analysis->pages).' custom page(s):');
+            foreach ($analysis->pages as $page) {
+                $this->line('  - '.$page->name.' (/admin/'.$page->slug.')');
+            }
+            $this->newLine();
+        }
+
         $this->info('Run "screentest capture" to generate screenshots.');
 
         return self::SUCCESS;
@@ -211,6 +219,10 @@ class InitCommand extends Command
             $options["{$name}-edit"] = "{$name} - Edit Page";
         }
 
+        foreach ($analysis->pages as $page) {
+            $options["page-{$page->slug}"] = "{$page->name} (custom page)";
+        }
+
         return $options;
     }
 
@@ -246,6 +258,15 @@ class InitCommand extends Command
                 $screenshots[] = [
                     'name' => strtolower($name).'-edit',
                     'url' => "/admin/{$pluralSlug}/1/edit",
+                ];
+            }
+        }
+
+        foreach ($analysis->pages as $page) {
+            if (in_array("page-{$page->slug}", $selectedKeys, true)) {
+                $screenshots[] = [
+                    'name' => $page->slug,
+                    'url' => "/admin/{$page->slug}",
                 ];
             }
         }

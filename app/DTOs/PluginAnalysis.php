@@ -11,6 +11,7 @@ readonly class PluginAnalysis
         public string $package,
         public ?FilamentVersion $filamentVersion,
         public array $resources = [],
+        public array $pages = [],
         public array $panelIds = [],
     ) {}
 
@@ -23,6 +24,10 @@ readonly class PluginAnalysis
             resources: isset($data['resources']) ? array_map(
                 fn (array $resource) => ResourceInfo::fromArray($resource),
                 $data['resources'],
+            ) : [],
+            pages: isset($data['pages']) ? array_map(
+                fn (array $page) => PageInfo::fromArray($page),
+                $data['pages'],
             ) : [],
             panelIds: $data['panelIds'] ?? [],
         );

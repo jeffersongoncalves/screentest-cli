@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\DTOs\FieldInfo;
+use App\DTOs\PageInfo;
 use App\DTOs\PluginAnalysis;
 use App\DTOs\ResourceInfo;
 use App\Enums\FilamentVersion;
@@ -31,12 +32,14 @@ class PluginAnalyzerService
         $filamentVersion = $this->detectFilamentVersion($composerData);
         $psr4 = $composerData['autoload']['psr-4'] ?? [];
         $resources = $this->detectResources($pluginPath, $psr4);
+        $pages = $this->detectPages($pluginPath);
 
         return new PluginAnalysis(
             pluginClass: $pluginClass ?? 'Unknown\\Plugin',
             package: $package,
             filamentVersion: $filamentVersion,
             resources: $resources,
+            pages: $pages,
         );
     }
 
@@ -161,6 +164,79 @@ class PluginAnalyzerService
         }
 
         return $resources;
+    }
+
+    /**
+     * Detect standalone Filament Page classes (settings/metrics/import-style pages
+     * registered via `$panel->pages([...])`, as opposed to a Resource's own
+     * List/Create/Edit pages, which live under `<Resource>/Pages/` and extend
+     * ListRecords/CreateRecord/EditRecord rather than the plain Page class).
+     *
+     * @return PageInfo[]
+     */
+    protected function detectPages(string $pluginPath): array
+    {
+        $srcPath = $pluginPath.'/src';
+
+        if (! is_dir($srcPath)) {
+            return [];
+        }
+
+        $finder = new Finder;
+        $finder->files()->in($srcPath)->name('*.php')->sortByName();
+
+        $pages = [];
+
+        foreach ($finder as $file) {
+            $relativePath = str_replace('\\', '/', $file->getRelativePathname());
+
+            // A Resource's own pages live under Resources/<X>Resource/Pages/ and
+            // extend ListRecords/CreateRecord/EditRecord, not the plain Page class.
+            if (str_contains($relativePath, 'Resources/')) {
+                continue;
+            }
+
+            $content = $file->getContents();
+
+            if (! preg_match('/extends\s+[A-Za-z0-9\\\\]*Page\b/', $content)) {
+                continue;
+            }
+
+            $namespace = null;
+            $className = null;
+
+            if (preg_match('/namespace\s+([A-Za-z0-9\\\\]+)\s*;/', $content, $nsMatch)) {
+                $namespace = $nsMatch[1];
+            }
+
+            if (preg_match('/class\s+([A-Za-z0-9_]+)\s+/', $content, $classMatch)) {
+                $className = $classMatch[1];
+            }
+
+            if (! $className) {
+                continue;
+            }
+
+            $fqcn = $namespace ? $namespace.'\\'.$className : $className;
+
+            // An explicit `protected static ?string $slug = '...'` override wins;
+            // otherwise this mirrors Filament's own default: kebab-case of the
+            // class basename (e.g. SettingsPage -> settings-page).
+            if (preg_match('/protected\s+static\s+\??\s*string\s+\$slug\s*=\s*[\'"]([^\'"]+)[\'"]\s*;/', $content, $slugMatch)) {
+                $slug = $slugMatch[1];
+            } else {
+                $slug = $this->kebabCase($className);
+            }
+
+            $pages[] = new PageInfo(class: $fqcn, name: $className, slug: $slug);
+        }
+
+        return $pages;
+    }
+
+    private function kebabCase(string $value): string
+    {
+        return strtolower(preg_replace('/([a-z0-9])([A-Z])/', '$1-$2', $value));
     }
 
     /**
