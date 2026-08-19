@@ -26,15 +26,10 @@ class SeedService
         $this->generateUserSeeder($config->seed->user, $projectPath);
         $seederClasses[] = 'ScreentestUserSeeder';
 
-        // 2. Auto-detect resources and generate factories/seeders
-        if ($config->seed->autoDetect) {
-            $analysis = $this->analyzer->analyze($pluginPath);
-            $orderedResources = $this->orderByDependency($analysis->resources);
-            $autoSeederClasses = $this->generateModelSeeders($orderedResources, $config->seed, $projectPath);
-            $seederClasses = array_merge($seederClasses, $autoSeederClasses);
-        }
-
-        // 3. Generate seeders for explicitly defined models
+        // 2. Generate seeders for explicitly defined models first — explicit
+        // config (in particular per-model `attributes`) must win over
+        // auto-detection, never get silently dropped because auto-detect
+        // already claimed that model's seeder class name.
         foreach ($config->seed->models as $modelSeedConfig) {
             /** @var ModelSeedConfig $modelSeedConfig */
             $modelShort = class_basename($modelSeedConfig->model);
@@ -46,6 +41,15 @@ class SeedService
 
             $this->generateExplicitModelSeeder($modelSeedConfig, $projectPath);
             $seederClasses[] = $seederClass;
+        }
+
+        // 3. Auto-detect resources and generate factories/seeders for
+        // anything not already explicitly configured above.
+        if ($config->seed->autoDetect) {
+            $analysis = $this->analyzer->analyze($pluginPath);
+            $orderedResources = $this->orderByDependency($analysis->resources);
+            $autoSeederClasses = $this->generateModelSeeders($orderedResources, $config->seed, $projectPath, $seederClasses);
+            $seederClasses = array_merge($seederClasses, $autoSeederClasses);
         }
 
         // 4. Create master ScreentestSeeder
@@ -89,15 +93,20 @@ PHP;
 
     /**
      * @param  ResourceInfo[]  $resources
+     * @param  string[]  $reservedSeederClasses  seeder classes already generated explicitly — skip these
      * @return string[]
      */
-    protected function generateModelSeeders(array $resources, SeedConfig $config, string $projectPath): array
+    protected function generateModelSeeders(array $resources, SeedConfig $config, string $projectPath, array $reservedSeederClasses = []): array
     {
         $seederClasses = [];
 
         foreach ($resources as $resource) {
             $modelShort = $resource->modelShortName;
             $modelClass = $resource->model;
+
+            if (in_array("Screentest{$modelShort}Seeder", $reservedSeederClasses, true)) {
+                continue;
+            }
 
             // Find explicit count for this model, default to 10
             $count = 10;
