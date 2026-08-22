@@ -146,8 +146,8 @@ function makeDependencyWrapperFixturePlugin(): string
     $root = sys_get_temp_dir().'/screentest-fixture-deps-'.uniqid();
 
     mkdir($root.'/src', recursive: true);
-    mkdir($root.'/vendor/acme/short-url/src', recursive: true);
-    mkdir($root.'/vendor/acme/short-url/config', recursive: true);
+    mkdir($root.'/vendor/acme/laravel-short-url/src', recursive: true);
+    mkdir($root.'/vendor/acme/laravel-short-url/config', recursive: true);
 
     file_put_contents($root.'/composer.json', json_encode([
         'name' => 'acme/filament-short-url',
@@ -158,12 +158,13 @@ function makeDependencyWrapperFixturePlugin(): string
         ],
         'require' => [
             'filament/filament' => '^3.0',
-            'acme/short-url' => '^1.0',
+            'acme/laravel-short-url' => '^1.0',
         ],
     ]));
 
-    // The Filament plugin itself has no publishes()/env() calls at all —
-    // both live one level down, in the wrapped standalone package.
+    // Mirrors jeffersongoncalves/filament-short-url: the Filament plugin has no
+    // publishes()/env() calls of its own, but does gate a resource behind a
+    // config() read that resolves into the wrapped package's config file.
     file_put_contents($root.'/src/ShortUrlPlugin.php', <<<'PHP'
         <?php
 
@@ -171,31 +172,62 @@ function makeDependencyWrapperFixturePlugin(): string
 
         class ShortUrlPlugin
         {
-        }
-        PHP);
-
-    file_put_contents($root.'/vendor/acme/short-url/src/ShortUrlServiceProvider.php', <<<'PHP'
-        <?php
-
-        namespace Acme\ShortUrl;
-
-        class ShortUrlServiceProvider
-        {
-            public function boot(): void
+            public function panel($panel)
             {
-                $this->publishesMigrations([
-                    __DIR__.'/../database/migrations' => database_path('migrations'),
-                ], 'short-url-migrations');
+                return $panel->resources(array_filter(
+                    $this->resources,
+                    fn (string $resource): bool => match ($resource) {
+                        CustomDomainResource::class => (bool) config('short-url.domains.enabled', false),
+                        default => true,
+                    },
+                ));
             }
         }
         PHP);
 
-    file_put_contents($root.'/vendor/acme/short-url/config/short-url.php', <<<'PHP'
+    // Mirrors spatie/laravel-package-tools: no literal publishes()/publishesMigrations()
+    // call anywhere — ->name(static::$name)->hasMigrations([...]) generates the
+    // "{shortName}-migrations" tag internally.
+    file_put_contents($root.'/vendor/acme/laravel-short-url/src/LaravelShortUrlServiceProvider.php', <<<'PHP'
+        <?php
+
+        namespace Acme\LaravelShortUrl;
+
+        use Spatie\LaravelPackageTools\Package;
+        use Spatie\LaravelPackageTools\PackageServiceProvider;
+
+        class LaravelShortUrlServiceProvider extends PackageServiceProvider
+        {
+            public static string $name = 'laravel-short-url';
+
+            public function configurePackage(Package $package): void
+            {
+                $package
+                    ->name(static::$name)
+                    ->hasConfigFile('short-url')
+                    ->hasMigrations(['create_short_urls_table']);
+            }
+        }
+        PHP);
+
+    // Many unrelated env() reads (credentials, unrelated feature toggles) that must
+    // NOT end up in install.env — only 'domains.enabled', the one the plugin's own
+    // config('short-url.domains.enabled') call actually gates, should be picked up.
+    file_put_contents($root.'/vendor/acme/laravel-short-url/config/short-url.php', <<<'PHP'
         <?php
 
         return [
-            'domains_enabled' => env('SHORT_URL_DOMAINS_ENABLED', false),
-            'api_enabled' => env('SHORT_URL_API_ENABLED', true),
+            'domains' => [
+                'enabled' => env('SHORT_URL_DOMAINS_ENABLED', false),
+                'max_verification_failures' => env('SHORT_URL_DOMAIN_MAX_FAILURES', 10),
+            ],
+            'security' => [
+                'maxmind_db_path' => env('SHORT_URL_MAXMIND_DB_PATH'),
+                'ip_hash_salt' => env('SHORT_URL_IP_HASH_SALT'),
+            ],
+            'api' => [
+                'enabled' => env('SHORT_URL_API_ENABLED', true),
+            ],
         ];
         PHP);
 
@@ -205,7 +237,7 @@ function makeDependencyWrapperFixturePlugin(): string
 it('follows publishes()/env() calls into an opted-in Composer dependency the plugin wraps', function () {
     $pluginPath = makeDependencyWrapperFixturePlugin();
 
-    $analysis = (new PluginAnalyzerService)->analyze($pluginPath, ['acme/short-url']);
+    $analysis = (new PluginAnalyzerService)->analyze($pluginPath, ['acme/laravel-short-url']);
 
     expect($analysis->publishTags)->toBe(['short-url-migrations'])
         ->and($analysis->envCandidates)->toBe(['SHORT_URL_DOMAINS_ENABLED' => 'true']);
@@ -218,4 +250,15 @@ it('does not scan dependencies unless explicitly opted in via $depPackages', fun
 
     expect($analysis->publishTags)->toBe([])
         ->and($analysis->envCandidates)->toBe([]);
+});
+
+it('does not leak unrelated env() reads from the dependency that no config() gate references', function () {
+    $pluginPath = makeDependencyWrapperFixturePlugin();
+
+    $analysis = (new PluginAnalyzerService)->analyze($pluginPath, ['acme/laravel-short-url']);
+
+    expect($analysis->envCandidates)->not->toHaveKey('SHORT_URL_MAXMIND_DB_PATH')
+        ->and($analysis->envCandidates)->not->toHaveKey('SHORT_URL_IP_HASH_SALT')
+        ->and($analysis->envCandidates)->not->toHaveKey('SHORT_URL_API_ENABLED')
+        ->and($analysis->envCandidates)->not->toHaveKey('SHORT_URL_DOMAIN_MAX_FAILURES');
 });

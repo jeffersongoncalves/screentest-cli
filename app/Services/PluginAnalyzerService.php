@@ -54,10 +54,16 @@ class PluginAnalyzerService
     }
 
     /**
-     * Scan `publishes()`/`publishesMigrations()` calls inside the given Composer
-     * dependencies' installed code (vendor/<package>) for their publish tags, since
-     * a Filament plugin that merely wraps another package (e.g. a "kit" plugin around
-     * a standalone service package) declares no `publishes()` of its own.
+     * Find the migration publish tag inside the given Composer dependencies' installed
+     * code (vendor/<package>), since a Filament plugin that merely wraps another package
+     * (e.g. a "kit" plugin around a standalone service package) declares no `publishes()`
+     * of its own — the tag lives one level down, in the wrapped package.
+     *
+     * Two patterns are recognized:
+     * - A direct `publishes()`/`publishesMigrations()` call with an explicit tag argument.
+     * - The `spatie/laravel-package-tools` DSL (`->name('x')->hasMigrations([...])`), which
+     *   generates the tag internally as "{shortName}-migrations" with no literal
+     *   `publishes*()` call anywhere in the source — see `Package::shortName()`.
      *
      * @param  string[]  $depPackages
      * @return string[]
@@ -69,16 +75,27 @@ class PluginAnalyzerService
         foreach ($this->findDependencyFiles($pluginPath, $depPackages) as $file) {
             $content = $file->getContents();
 
-            if (! preg_match_all('/publishes(?:Migrations)?\s*\(/', $content, $callMatches, PREG_OFFSET_CAPTURE)) {
-                continue;
+            if (preg_match_all('/publishes(?:Migrations)?\s*\(/', $content, $callMatches, PREG_OFFSET_CAPTURE)) {
+                foreach ($callMatches[0] as $callMatch) {
+                    $openParenOffset = $callMatch[1] + strlen($callMatch[0]) - 1;
+                    $args = $this->extractParenthesizedBody($content, $openParenOffset);
+
+                    if (preg_match('/,\s*[\'"]([A-Za-z0-9_\-]+)[\'"]\s*,?\s*$/', rtrim($args), $tagMatch)) {
+                        $tags[] = $tagMatch[1];
+                    }
+                }
             }
 
-            foreach ($callMatches[0] as $callMatch) {
-                $openParenOffset = $callMatch[1] + strlen($callMatch[0]) - 1;
-                $args = $this->extractParenthesizedBody($content, $openParenOffset);
+            if (str_contains($content, 'hasMigrations(')
+                && preg_match('/->name\s*\(\s*([^)]+?)\s*\)/', $content, $nameMatch)) {
+                $packageName = $this->resolvePackageNameExpression($nameMatch[1], $content);
 
-                if (preg_match('/,\s*[\'"]([A-Za-z0-9_\-]+)[\'"]\s*,?\s*$/', rtrim($args), $tagMatch)) {
-                    $tags[] = $tagMatch[1];
+                if ($packageName !== null) {
+                    $shortName = str_contains($packageName, 'laravel-')
+                        ? substr($packageName, strpos($packageName, 'laravel-') + strlen('laravel-'))
+                        : $packageName;
+
+                    $tags[] = $shortName.'-migrations';
                 }
             }
         }
@@ -87,33 +104,88 @@ class PluginAnalyzerService
     }
 
     /**
-     * Scan `env('KEY', default)` reads inside the given Composer dependencies' installed
-     * code for flags that default to a falsy value, since those are the ones a plugin
-     * needs enabled (via `install.env`) for the dependency's config-gated resources/pages
-     * to register at all.
+     * Resolve the argument passed to a `->name(...)` call to a literal package name string:
+     * either a quoted literal directly, or a `static::$name`/`self::$name` reference to a
+     * class property assigned a literal string in the same file.
+     */
+    private function resolvePackageNameExpression(string $expr, string $content): ?string
+    {
+        $expr = trim($expr);
+
+        if (preg_match('/^[\'"]([^\'"]+)[\'"]$/', $expr, $match)) {
+            return $match[1];
+        }
+
+        if (preg_match('/^(?:static|self)::\$name$/', $expr)
+            && preg_match('/\$name\s*=\s*[\'"]([^\'"]+)[\'"]\s*;/', $content, $match)) {
+            return $match[1];
+        }
+
+        return null;
+    }
+
+    /**
+     * Trace each `config('<file>.<...>.<key>', default)` gate found in the plugin's own
+     * source (see `detectConfigGateKeys()`) into the given Composer dependencies'
+     * `config/<file>.php`, to find the specific `env('KEY', default)` call backing that
+     * exact key — as opposed to every `env()` call anywhere in the dependency, most of
+     * which (credentials, unrelated feature toggles, ...) have nothing to do with which
+     * admin pages get registered.
      *
      * @param  string[]  $depPackages
      * @return array<string, string>
      */
     protected function detectDependencyEnvFlags(string $pluginPath, array $depPackages): array
     {
+        if ($depPackages === []) {
+            return [];
+        }
+
         $flags = [];
 
-        foreach ($this->findDependencyFiles($pluginPath, $depPackages) as $file) {
-            $content = $file->getContents();
+        foreach ($this->detectConfigGateKeys($pluginPath) as $key) {
+            $segments = explode('.', $key);
 
-            if (! preg_match_all(
-                '/env\s*\(\s*[\'"]([A-Z][A-Z0-9_]*)[\'"]\s*(?:,\s*(true|false|null|\d+))?\s*\)/',
-                $content,
-                $matches,
-                PREG_SET_ORDER
-            )) {
+            if (count($segments) < 2) {
                 continue;
             }
 
-            foreach ($matches as $match) {
-                $key = $match[1];
-                $default = strtolower($match[2] ?? 'null');
+            $configFile = array_shift($segments);
+            $leaf = array_pop($segments);
+            $parents = $segments;
+
+            foreach ($depPackages as $depPackage) {
+                $configPath = rtrim($pluginPath, '/').'/vendor/'.trim($depPackage, '/').'/config/'.$configFile.'.php';
+
+                if (! is_file($configPath)) {
+                    continue;
+                }
+
+                $content = file_get_contents($configPath);
+
+                if ($content === false) {
+                    continue;
+                }
+
+                $scope = $content;
+
+                foreach ($parents as $parent) {
+                    $scope = $this->extractArrayValueScope($scope, $parent);
+
+                    if ($scope === null) {
+                        continue 2;
+                    }
+                }
+
+                if (! preg_match(
+                    '/[\'"]'.preg_quote($leaf, '/').'[\'"]\s*=>\s*env\s*\(\s*[\'"]([A-Z][A-Z0-9_]*)[\'"]\s*(?:,\s*(true|false|null|\d+))?\s*\)/',
+                    $scope,
+                    $envMatch
+                )) {
+                    continue;
+                }
+
+                $default = strtolower($envMatch[2] ?? 'null');
 
                 // Already enabled by default (or a non-boolean default we can't reason
                 // about) — nothing for `install.env` to override.
@@ -121,11 +193,85 @@ class PluginAnalyzerService
                     continue;
                 }
 
-                $flags[$key] = 'true';
+                $flags[$envMatch[1]] = 'true';
             }
         }
 
         return $flags;
+    }
+
+    /**
+     * Scan the plugin's own source (not its dependencies) for `config('a.b.c', ...)` reads,
+     * the candidate gate keys that `detectDependencyEnvFlags()` then traces into a
+     * dependency's config file. Every call is treated as a candidate — the plugin's own
+     * source is small, so over-inclusion here is far narrower than grepping an entire
+     * dependency.
+     *
+     * @return string[]
+     */
+    protected function detectConfigGateKeys(string $pluginPath): array
+    {
+        $srcPath = $pluginPath.'/src';
+
+        if (! is_dir($srcPath)) {
+            return [];
+        }
+
+        $finder = new Finder;
+        $finder->files()->in($srcPath)->name('*.php');
+
+        $keys = [];
+
+        foreach ($finder as $file) {
+            if (preg_match_all(
+                '/config\s*\(\s*[\'"]([a-zA-Z0-9_\-]+(?:\.[a-zA-Z0-9_\-]+)+)[\'"]/',
+                $file->getContents(),
+                $matches
+            )) {
+                array_push($keys, ...$matches[1]);
+            }
+        }
+
+        return array_values(array_unique($keys));
+    }
+
+    /**
+     * Find `'key' => [...]` in a config file's content and return the contents of that
+     * array (depth aware), or null if the key isn't found as an array value.
+     */
+    private function extractArrayValueScope(string $content, string $key): ?string
+    {
+        if (! preg_match('/[\'"]'.preg_quote($key, '/').'[\'"]\s*=>\s*\[/', $content, $match, PREG_OFFSET_CAPTURE)) {
+            return null;
+        }
+
+        $openBracketOffset = $match[0][1] + strlen($match[0][0]) - 1;
+
+        return $this->extractBracketedBody($content, $openBracketOffset);
+    }
+
+    /**
+     * Given the offset of an opening `[`, return the content between it and its
+     * matching closing `]` (depth aware, so nested arrays don't confuse it).
+     */
+    private function extractBracketedBody(string $content, int $openBracketOffset): string
+    {
+        $depth = 0;
+        $length = strlen($content);
+
+        for ($i = $openBracketOffset; $i < $length; $i++) {
+            if ($content[$i] === '[') {
+                $depth++;
+            } elseif ($content[$i] === ']') {
+                $depth--;
+
+                if ($depth === 0) {
+                    return substr($content, $openBracketOffset + 1, $i - $openBracketOffset - 1);
+                }
+            }
+        }
+
+        return substr($content, $openBracketOffset + 1);
     }
 
     /**
