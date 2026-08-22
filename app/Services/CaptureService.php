@@ -81,7 +81,7 @@ class CaptureService
             return;
         }
 
-        $context = base_path('stubs/docker');
+        $context = $this->dockerBuildContextPath();
 
         $build = $this->process->docker('build -t '.$image.' "'.$context.'"', timeout: 600);
 
@@ -90,6 +90,31 @@ class CaptureService
                 'Docker image build failed: '.$build->errorOutput().$build->output()
             );
         }
+    }
+
+    /**
+     * `base_path('stubs/docker')` resolves inside the phar (a `phar://...` stream-wrapped
+     * path) when this binary is running as a compiled `.phar` — the normal Composer global
+     * install. PHP's own file functions understand that scheme transparently, but Docker's
+     * CLI/daemon doesn't; handed a `phar://` path it just reports "path not found". Extract
+     * `stubs/docker` to a real, cached temp directory in that case and use that as the build
+     * context instead; a source checkout (`base_path()` already a real path) is used as-is.
+     */
+    protected function dockerBuildContextPath(): string
+    {
+        $pharPath = \Phar::running(false);
+
+        if ($pharPath === '') {
+            return base_path('stubs/docker');
+        }
+
+        $target = sys_get_temp_dir().'/screentest-docker-build-'.md5($pharPath.filemtime($pharPath));
+
+        if (! File::isDirectory($target.'/stubs/docker')) {
+            (new \Phar($pharPath))->extractTo($target, 'stubs/docker', true);
+        }
+
+        return $target.'/stubs/docker';
     }
 
     protected function generateCaptureScript(ScreentestConfig $config, string $projectPath, string $baseUrl): string
