@@ -26,6 +26,22 @@ No PHPStan in this project (unlike bb-cli/jira-cli/installer in the monorepo).
 
 Copy `stubs/screentest.json.stub` into the target plugin's repo root and fill in every field below. Ordering matters — install/publish/post-install run in this order, before seeding, before the browser ever loads a page.
 
+### Running `init` non-interactively (agents, CI)
+
+`screentest init` prompts (plugin name, package name, screenshot selection, README update) via Laravel Prompts. Under an agent harness with no tty, Symfony's `$input->isInteractive()` is `false`, so `init` automatically skips every prompt and falls back to flags/defaults instead of hanging:
+
+```bash
+screentest init --path=. \
+  --name="My Plugin" \
+  --package=vendor/my-plugin \
+  --screenshots=all \
+  --no-readme
+```
+
+- `--name` / `--package` — default to the analyzer's guess when omitted.
+- `--screenshots` — comma-separated keys from the detected resources/pages (e.g. `thing-list,thing-edit`), or `all` (default when omitted), or `""` for none.
+- `--no-readme` — skip the README update (default: update).
+
 ```jsonc
 {
   "plugin": { "name": "...", "package": "vendor/package" },

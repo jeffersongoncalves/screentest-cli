@@ -26,7 +26,11 @@ class InitCommand extends Command
      */
     protected $signature = 'init
         {--path= : Plugin directory path}
-        {--force : Overwrite existing config}';
+        {--force : Overwrite existing config}
+        {--name= : Plugin name (skips prompt)}
+        {--package= : Package name (skips prompt)}
+        {--screenshots= : Comma-separated screenshot keys to include, or "all" (skips prompt)}
+        {--no-readme : Do not update README.md with screenshots (skips prompt)}';
 
     /**
      * The description of the command.
@@ -71,35 +75,52 @@ class InitCommand extends Command
             return self::FAILURE;
         }
 
-        // Interactive refinement with Laravel Prompts
-        $pluginName = text(
-            label: 'Plugin name',
-            default: $this->guessPluginName($analysis),
-            required: true,
-        );
-
-        $package = text(
-            label: 'Package name',
-            default: $analysis->package,
-            required: true,
-        );
+        $interactive = $this->input->isInteractive();
 
         // Build screenshot options from detected resources
         $screenshotOptions = $this->buildScreenshotOptions($analysis);
-        $selectedScreenshots = [];
 
-        if (! empty($screenshotOptions)) {
-            $selectedScreenshots = multiselect(
-                label: 'Which screenshots should be generated?',
-                options: $screenshotOptions,
-                default: array_keys($screenshotOptions),
+        if ($interactive) {
+            $pluginName = text(
+                label: 'Plugin name',
+                default: $this->guessPluginName($analysis),
+                required: true,
             );
-        }
 
-        $updateReadme = confirm(
-            label: 'Update README.md with screenshots?',
-            default: true,
-        );
+            $package = text(
+                label: 'Package name',
+                default: $analysis->package,
+                required: true,
+            );
+
+            $selectedScreenshots = [];
+
+            if (! empty($screenshotOptions)) {
+                $selectedScreenshots = multiselect(
+                    label: 'Which screenshots should be generated?',
+                    options: $screenshotOptions,
+                    default: array_keys($screenshotOptions),
+                );
+            }
+
+            $updateReadme = confirm(
+                label: 'Update README.md with screenshots?',
+                default: true,
+            );
+        } else {
+            $pluginName = $this->option('name') ?: $this->guessPluginName($analysis);
+            $package = $this->option('package') ?: $analysis->package;
+
+            $screenshotsOption = $this->option('screenshots');
+            $selectedScreenshots = match (true) {
+                $screenshotsOption === null => array_keys($screenshotOptions),
+                strtolower($screenshotsOption) === 'all' => array_keys($screenshotOptions),
+                $screenshotsOption === '' => [],
+                default => array_map('trim', explode(',', $screenshotsOption)),
+            };
+
+            $updateReadme = ! $this->option('no-readme');
+        }
 
         // Determine Filakit based on detected Filament version
         $filakitKit = match ($analysis->filamentVersion) {
