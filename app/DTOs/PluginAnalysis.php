@@ -13,6 +13,8 @@ readonly class PluginAnalysis
         public array $resources = [],
         public array $pages = [],
         public array $panelIds = [],
+        public array $publishTags = [],
+        public array $envCandidates = [],
     ) {}
 
     public static function fromArray(array $data): self
@@ -30,6 +32,8 @@ readonly class PluginAnalysis
                 $data['pages'],
             ) : [],
             panelIds: $data['panelIds'] ?? [],
+            publishTags: $data['publishTags'] ?? [],
+            envCandidates: $data['envCandidates'] ?? [],
         );
     }
 }

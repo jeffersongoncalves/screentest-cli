@@ -13,7 +13,12 @@ use Symfony\Component\Finder\Finder;
 
 class PluginAnalyzerService
 {
-    public function analyze(string $pluginPath): PluginAnalysis
+    /**
+     * @param  string[]  $depPackages  Composer package names (e.g. "vendor/package") whose
+     *                                 installed code under vendor/ should also be scanned for
+     *                                 publishes()/env() calls the plugin itself merely wraps.
+     */
+    public function analyze(string $pluginPath, array $depPackages = []): PluginAnalysis
     {
         $composerPath = $pluginPath.'/composer.json';
 
@@ -33,6 +38,8 @@ class PluginAnalyzerService
         $psr4 = $composerData['autoload']['psr-4'] ?? [];
         $resources = $this->detectResources($pluginPath, $psr4);
         $pages = $this->detectPages($pluginPath);
+        $publishTags = $this->detectDependencyPublishTags($pluginPath, $depPackages);
+        $envCandidates = $this->detectDependencyEnvFlags($pluginPath, $depPackages);
 
         return new PluginAnalysis(
             pluginClass: $pluginClass ?? 'Unknown\\Plugin',
@@ -40,7 +47,138 @@ class PluginAnalyzerService
             filamentVersion: $filamentVersion,
             resources: $resources,
             pages: $pages,
+            publishTags: $publishTags,
+            envCandidates: $envCandidates,
         );
+    }
+
+    /**
+     * Scan `publishes()`/`publishesMigrations()` calls inside the given Composer
+     * dependencies' installed code (vendor/<package>) for their publish tags, since
+     * a Filament plugin that merely wraps another package (e.g. a "kit" plugin around
+     * a standalone service package) declares no `publishes()` of its own.
+     *
+     * @param  string[]  $depPackages
+     * @return string[]
+     */
+    protected function detectDependencyPublishTags(string $pluginPath, array $depPackages): array
+    {
+        $tags = [];
+
+        foreach ($this->findDependencyFiles($pluginPath, $depPackages) as $file) {
+            $content = $file->getContents();
+
+            if (! preg_match_all('/publishes(?:Migrations)?\s*\(/', $content, $callMatches, PREG_OFFSET_CAPTURE)) {
+                continue;
+            }
+
+            foreach ($callMatches[0] as $callMatch) {
+                $openParenOffset = $callMatch[1] + strlen($callMatch[0]) - 1;
+                $args = $this->extractParenthesizedBody($content, $openParenOffset);
+
+                if (preg_match('/,\s*[\'"]([A-Za-z0-9_\-]+)[\'"]\s*,?\s*$/', rtrim($args), $tagMatch)) {
+                    $tags[] = $tagMatch[1];
+                }
+            }
+        }
+
+        return array_values(array_unique($tags));
+    }
+
+    /**
+     * Scan `env('KEY', default)` reads inside the given Composer dependencies' installed
+     * code for flags that default to a falsy value, since those are the ones a plugin
+     * needs enabled (via `install.env`) for the dependency's config-gated resources/pages
+     * to register at all.
+     *
+     * @param  string[]  $depPackages
+     * @return array<string, string>
+     */
+    protected function detectDependencyEnvFlags(string $pluginPath, array $depPackages): array
+    {
+        $flags = [];
+
+        foreach ($this->findDependencyFiles($pluginPath, $depPackages) as $file) {
+            $content = $file->getContents();
+
+            if (! preg_match_all(
+                '/env\s*\(\s*[\'"]([A-Z][A-Z0-9_]*)[\'"]\s*(?:,\s*(true|false|null|\d+))?\s*\)/',
+                $content,
+                $matches,
+                PREG_SET_ORDER
+            )) {
+                continue;
+            }
+
+            foreach ($matches as $match) {
+                $key = $match[1];
+                $default = strtolower($match[2] ?? 'null');
+
+                // Already enabled by default (or a non-boolean default we can't reason
+                // about) — nothing for `install.env` to override.
+                if ($default === 'true' || (ctype_digit($default) && (int) $default !== 0)) {
+                    continue;
+                }
+
+                $flags[$key] = 'true';
+            }
+        }
+
+        return $flags;
+    }
+
+    /**
+     * @param  string[]  $depPackages
+     * @return iterable<\Symfony\Component\Finder\SplFileInfo>
+     */
+    private function findDependencyFiles(string $pluginPath, array $depPackages): iterable
+    {
+        if ($depPackages === []) {
+            return [];
+        }
+
+        $files = [];
+
+        foreach ($depPackages as $depPackage) {
+            $depPath = rtrim($pluginPath, '/').'/vendor/'.trim($depPackage, '/');
+
+            if (! is_dir($depPath)) {
+                continue;
+            }
+
+            $finder = new Finder;
+            $finder->files()->in($depPath)->name('*.php')->exclude(['tests', 'Tests', 'vendor']);
+
+            foreach ($finder as $file) {
+                $files[] = $file;
+            }
+        }
+
+        return $files;
+    }
+
+    /**
+     * Given the offset of an opening `(`, return the content between it and its
+     * matching closing `)` (depth aware, so nested calls don't confuse it).
+     */
+    private function extractParenthesizedBody(string $content, int $openParenOffset): string
+    {
+        $depth = 0;
+        $length = strlen($content);
+
+        for ($i = $openParenOffset; $i < $length; $i++) {
+            if ($content[$i] === '(') {
+                $depth++;
+            } elseif ($content[$i] === ')') {
+                $depth--;
+
+                if ($depth === 0) {
+                    return substr($content, $openParenOffset + 1, $i - $openParenOffset - 1);
+                }
+            }
+        }
+
+        return substr($content, $openParenOffset + 1);
     }
 
     /**

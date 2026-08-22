@@ -140,3 +140,82 @@ it('still detects inline fields and the Filament v3 version constraint (no deleg
     expect($fieldNames)->toContain('title')
         ->toContain('is_published');
 });
+
+function makeDependencyWrapperFixturePlugin(): string
+{
+    $root = sys_get_temp_dir().'/screentest-fixture-deps-'.uniqid();
+
+    mkdir($root.'/src', recursive: true);
+    mkdir($root.'/vendor/acme/short-url/src', recursive: true);
+    mkdir($root.'/vendor/acme/short-url/config', recursive: true);
+
+    file_put_contents($root.'/composer.json', json_encode([
+        'name' => 'acme/filament-short-url',
+        'autoload' => [
+            'psr-4' => [
+                'Acme\\FilamentShortUrl\\' => 'src/',
+            ],
+        ],
+        'require' => [
+            'filament/filament' => '^3.0',
+            'acme/short-url' => '^1.0',
+        ],
+    ]));
+
+    // The Filament plugin itself has no publishes()/env() calls at all —
+    // both live one level down, in the wrapped standalone package.
+    file_put_contents($root.'/src/ShortUrlPlugin.php', <<<'PHP'
+        <?php
+
+        namespace Acme\FilamentShortUrl;
+
+        class ShortUrlPlugin
+        {
+        }
+        PHP);
+
+    file_put_contents($root.'/vendor/acme/short-url/src/ShortUrlServiceProvider.php', <<<'PHP'
+        <?php
+
+        namespace Acme\ShortUrl;
+
+        class ShortUrlServiceProvider
+        {
+            public function boot(): void
+            {
+                $this->publishesMigrations([
+                    __DIR__.'/../database/migrations' => database_path('migrations'),
+                ], 'short-url-migrations');
+            }
+        }
+        PHP);
+
+    file_put_contents($root.'/vendor/acme/short-url/config/short-url.php', <<<'PHP'
+        <?php
+
+        return [
+            'domains_enabled' => env('SHORT_URL_DOMAINS_ENABLED', false),
+            'api_enabled' => env('SHORT_URL_API_ENABLED', true),
+        ];
+        PHP);
+
+    return $root;
+}
+
+it('follows publishes()/env() calls into an opted-in Composer dependency the plugin wraps', function () {
+    $pluginPath = makeDependencyWrapperFixturePlugin();
+
+    $analysis = (new PluginAnalyzerService)->analyze($pluginPath, ['acme/short-url']);
+
+    expect($analysis->publishTags)->toBe(['short-url-migrations'])
+        ->and($analysis->envCandidates)->toBe(['SHORT_URL_DOMAINS_ENABLED' => 'true']);
+});
+
+it('does not scan dependencies unless explicitly opted in via $depPackages', function () {
+    $pluginPath = makeDependencyWrapperFixturePlugin();
+
+    $analysis = (new PluginAnalyzerService)->analyze($pluginPath);
+
+    expect($analysis->publishTags)->toBe([])
+        ->and($analysis->envCandidates)->toBe([]);
+});

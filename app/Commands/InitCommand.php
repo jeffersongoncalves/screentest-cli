@@ -30,7 +30,8 @@ class InitCommand extends Command
         {--name= : Plugin name (skips prompt)}
         {--package= : Package name (skips prompt)}
         {--screenshots= : Comma-separated screenshot keys to include, or "all" (skips prompt)}
-        {--no-readme : Do not update README.md with screenshots (skips prompt)}';
+        {--no-readme : Do not update README.md with screenshots (skips prompt)}
+        {--deps= : Comma-separated Composer package names to also scan (under vendor/) for publishes()/env() calls the plugin wraps}';
 
     /**
      * The description of the command.
@@ -60,11 +61,13 @@ class InitCommand extends Command
             return self::FAILURE;
         }
 
+        $depPackages = array_filter(array_map('trim', explode(',', (string) $this->option('deps'))));
+
         // Analyze the plugin
         $analysis = null;
 
-        $this->task('Analyzing plugin structure', function () use ($analyzer, $pluginPath, &$analysis) {
-            $analysis = $analyzer->analyze($pluginPath);
+        $this->task('Analyzing plugin structure', function () use ($analyzer, $pluginPath, $depPackages, &$analysis) {
+            $analysis = $analyzer->analyze($pluginPath, $depPackages);
 
             return true;
         });
@@ -147,8 +150,9 @@ class InitCommand extends Command
                         'panel' => 'admin',
                     ],
                 ],
-                'publish' => [],
+                'publish' => $analysis->publishTags,
                 'post_install_commands' => ['migrate'],
+                'env' => $analysis->envCandidates,
             ],
             'seed' => [
                 'auto_detect' => true,
@@ -196,6 +200,16 @@ class InitCommand extends Command
             foreach ($analysis->pages as $page) {
                 $this->line('  - '.$page->name.' (/admin/'.$page->slug.')');
             }
+            $this->newLine();
+        }
+
+        if (! empty($analysis->publishTags)) {
+            $this->info('Detected publish tag(s) from --deps: '.implode(', ', $analysis->publishTags));
+            $this->newLine();
+        }
+
+        if (! empty($analysis->envCandidates)) {
+            $this->info('Detected env flag(s) from --deps (defaulting to disabled): '.implode(', ', array_keys($analysis->envCandidates)));
             $this->newLine();
         }
 
