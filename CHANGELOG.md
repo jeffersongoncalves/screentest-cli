@@ -2,6 +2,10 @@
 
 All notable changes to `screentest-cli` will be documented in this file.
 
+## v1.0.29 - 2026-08-22
+
+Release v1.0.29
+
 ## v1.0.28 - 2026-08-22
 
 Release v1.0.28
