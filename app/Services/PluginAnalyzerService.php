@@ -201,11 +201,12 @@ class PluginAnalyzerService
     }
 
     /**
-     * Scan the plugin's own source (not its dependencies) for `config('a.b.c', ...)` reads,
-     * the candidate gate keys that `detectDependencyEnvFlags()` then traces into a
-     * dependency's config file. Every call is treated as a candidate — the plugin's own
-     * source is small, so over-inclusion here is far narrower than grepping an entire
-     * dependency.
+     * Scan the plugin's own source (not its dependencies) for `config('a.b.c', true|false|null)`
+     * reads, the candidate gate keys that `detectDependencyEnvFlags()` then traces into a
+     * dependency's config file. Only calls with a literal boolean/null default are treated as
+     * gate candidates — a `config()` read with no default, or a non-boolean one (a string
+     * fallback, a `parse_url(...)` expression, ...), is a plain display/config value, not
+     * something that turns a resource/page/widget's registration on or off.
      *
      * @return string[]
      */
@@ -224,7 +225,7 @@ class PluginAnalyzerService
 
         foreach ($finder as $file) {
             if (preg_match_all(
-                '/config\s*\(\s*[\'"]([a-zA-Z0-9_\-]+(?:\.[a-zA-Z0-9_\-]+)+)[\'"]/',
+                '/config\s*\(\s*[\'"]([a-zA-Z0-9_\-]+(?:\.[a-zA-Z0-9_\-]+)+)[\'"]\s*,\s*(true|false|null)\s*\)/i',
                 $file->getContents(),
                 $matches
             )) {

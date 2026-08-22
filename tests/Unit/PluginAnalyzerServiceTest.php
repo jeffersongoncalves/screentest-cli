@@ -185,6 +185,45 @@ function makeDependencyWrapperFixturePlugin(): string
         }
         PHP);
 
+    mkdir($root.'/src/Widgets', recursive: true);
+
+    // A second real gate (widget visibility, not just resource registration) —
+    // must still be picked up.
+    file_put_contents($root.'/src/Widgets/UsageOverview.php', <<<'PHP'
+        <?php
+
+        namespace Acme\FilamentShortUrl\Widgets;
+
+        use Filament\Widgets\Widget;
+
+        class UsageOverview extends Widget
+        {
+            public static function canView(): bool
+            {
+                return (bool) config('short-url.tenancy.enabled', false);
+            }
+        }
+        PHP);
+
+    mkdir($root.'/src/Resources/CustomDomainResource/Tables', recursive: true);
+
+    // A config() read with NO default — a plain display/fallback value (a hostname
+    // used in a table column), not a registration gate. Must NOT end up in
+    // install.env, even though it resolves to a real env() call in the dependency.
+    file_put_contents($root.'/src/Resources/CustomDomainResource/Tables/CustomDomainsTable.php', <<<'PHP'
+        <?php
+
+        namespace Acme\FilamentShortUrl\Resources\CustomDomainResource\Tables;
+
+        class CustomDomainsTable
+        {
+            public static function fallbackDomain(): ?string
+            {
+                return config('short-url.route.domain') ?? parse_url(config('app.url'), PHP_URL_HOST);
+            }
+        }
+        PHP);
+
     // Mirrors spatie/laravel-package-tools: no literal publishes()/publishesMigrations()
     // call anywhere — ->name(static::$name)->hasMigrations([...]) generates the
     // "{shortName}-migrations" tag internally.
@@ -228,6 +267,12 @@ function makeDependencyWrapperFixturePlugin(): string
             'api' => [
                 'enabled' => env('SHORT_URL_API_ENABLED', true),
             ],
+            'tenancy' => [
+                'enabled' => env('SHORT_URL_TENANCY_ENABLED', false),
+            ],
+            'route' => [
+                'domain' => env('SHORT_URL_ROUTE_DOMAIN'),
+            ],
         ];
         PHP);
 
@@ -240,7 +285,10 @@ it('follows publishes()/env() calls into an opted-in Composer dependency the plu
     $analysis = (new PluginAnalyzerService)->analyze($pluginPath, ['acme/laravel-short-url']);
 
     expect($analysis->publishTags)->toBe(['short-url-migrations'])
-        ->and($analysis->envCandidates)->toBe(['SHORT_URL_DOMAINS_ENABLED' => 'true']);
+        ->and($analysis->envCandidates)->toBe([
+            'SHORT_URL_DOMAINS_ENABLED' => 'true',
+            'SHORT_URL_TENANCY_ENABLED' => 'true',
+        ]);
 });
 
 it('does not scan dependencies unless explicitly opted in via $depPackages', function () {
@@ -261,4 +309,12 @@ it('does not leak unrelated env() reads from the dependency that no config() gat
         ->and($analysis->envCandidates)->not->toHaveKey('SHORT_URL_IP_HASH_SALT')
         ->and($analysis->envCandidates)->not->toHaveKey('SHORT_URL_API_ENABLED')
         ->and($analysis->envCandidates)->not->toHaveKey('SHORT_URL_DOMAIN_MAX_FAILURES');
+});
+
+it('does not treat a config() read with no literal boolean/null default as a gate (display-value, not a toggle)', function () {
+    $pluginPath = makeDependencyWrapperFixturePlugin();
+
+    $analysis = (new PluginAnalyzerService)->analyze($pluginPath, ['acme/laravel-short-url']);
+
+    expect($analysis->envCandidates)->not->toHaveKey('SHORT_URL_ROUTE_DOMAIN');
 });
