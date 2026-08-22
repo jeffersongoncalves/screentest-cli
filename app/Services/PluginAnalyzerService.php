@@ -10,6 +10,7 @@ use App\DTOs\PluginAnalysis;
 use App\DTOs\ResourceInfo;
 use App\Enums\FilamentVersion;
 use Symfony\Component\Finder\Finder;
+use Symfony\Component\Finder\SplFileInfo;
 
 class PluginAnalyzerService
 {
@@ -129,7 +130,7 @@ class PluginAnalyzerService
 
     /**
      * @param  string[]  $depPackages
-     * @return iterable<\Symfony\Component\Finder\SplFileInfo>
+     * @return iterable<SplFileInfo>
      */
     private function findDependencyFiles(string $pluginPath, array $depPackages): iterable
     {
