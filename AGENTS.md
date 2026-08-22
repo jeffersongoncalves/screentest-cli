@@ -41,6 +41,7 @@ screentest init --path=. \
 - `--name` / `--package` — default to the analyzer's guess when omitted.
 - `--screenshots` — comma-separated keys from the detected resources/pages (e.g. `thing-list,thing-edit`), or `all` (default when omitted), or `""` for none.
 - `--no-readme` — skip the README update (default: update).
+- `--deps` — comma-separated Composer package names (e.g. `vendor/laravel-short-url`) to also scan. For plugins that are thin wrappers around a standalone "kit" package, the interesting `publishes()`/`env()` calls often live one level down, in the wrapped package, not in the plugin's own `src/` — see below.
 
 ```jsonc
 {
@@ -80,6 +81,8 @@ php artisan vendor:publish --tag=<guess> --force   # "No publishable resources f
 ```
 
 Add the confirmed tag(s) to `install.publish` in `screentest.json`. `post_install_commands: ["migrate"]` only works *after* this — publish always runs before post-install commands in the pipeline, so ordering in the config file doesn't matter, only that the tag is present in `publish` at all.
+
+**If the plugin is a thin wrapper around another package** (a common `jeffersongoncalves/filament-*` "kit" pattern — a Filament plugin around a standalone service package), the plugin's own `src/` has none of this: no `publishes()`, no `env()` calls. Pass the wrapped package to `init --deps=` and the analyzer scans `vendor/<package>/` too, auto-populating `install.publish` (from `publishes()`/`publishesMigrations()` tags) and `install.env` (from `env('FLAG', false)` reads that default to disabled) — see the `init` section above.
 
 ### `install.env` — feature flags gating resource registration
 
