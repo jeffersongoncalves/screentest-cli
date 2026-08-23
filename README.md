@@ -88,6 +88,7 @@ The `screentest.json` file controls the entire process:
       "url": "admin/resources",
       "selector": "body",
       "viewport": { "width": 1920, "height": 1080, "deviceScaleFactor": 3 },
+      "fullPage": false,
       "before": [
         { "action": "wait", "delay": 500 }
       ]

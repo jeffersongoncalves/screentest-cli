@@ -148,6 +148,7 @@ class CaptureService
                     'height' => $screenshot->viewport->height,
                     'deviceScaleFactor' => $screenshot->viewport->deviceScaleFactor,
                 ] : null,
+                'fullPage' => $screenshot->fullPage,
             ], $config->screenshots),
             'themes' => array_map(fn ($theme) => $theme->value, $config->output->themes),
             'viewport' => [
@@ -348,6 +349,13 @@ async function main() {
 
       for (const screenshot of config.screenshots) {
         try {
+          const viewport = screenshot.viewport || config.viewport;
+          await page.setViewport({
+            width: viewport.width,
+            height: viewport.height,
+            deviceScaleFactor: viewport.deviceScaleFactor,
+          });
+
           const targetUrl = `\${config.baseUrl}/\${screenshot.url}`.replace(/([^:]\/)\/+/g, '\$1');
           await page.goto(targetUrl, { waitUntil: 'networkidle0', timeout: config.navigationTimeout });
 
@@ -383,7 +391,10 @@ async function main() {
           let element = screenshot.selector === 'body' ? page : await page.$(screenshot.selector);
           if (!element) element = page;
 
-          const buffer = await element.screenshot({ type: config.format === 'jpg' ? 'jpeg' : 'png' });
+          const buffer = await element.screenshot({
+            type: config.format === 'jpg' ? 'jpeg' : 'png',
+            fullPage: element === page ? !!screenshot.fullPage : undefined,
+          });
 
           if (screenshot.crop) {
             const cropped = await sharp(buffer)
