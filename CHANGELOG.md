@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.31] - 2026-08-24
+
+### Bug Fixes
+
+- Resolve enum-backed Select options and transitive dependency scanning
+
 ## [1.0.30] - 2026-08-23
 
 ### Bug Fixes
