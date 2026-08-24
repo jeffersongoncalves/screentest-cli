@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.36] - 2026-08-24
+
+### Bug Fixes
+
+- **capture:** Sign route URLs absolute so hasValidSignature() actually validates
+- **init:** Don't write seed.user for a package with no Filament panel
+
 ## [1.0.35] - 2026-08-24
 
 ### Features
