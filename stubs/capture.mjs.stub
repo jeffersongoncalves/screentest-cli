@@ -60,7 +60,15 @@ async function main() {
           });
 
           const targetUrl = `${config.baseUrl}/${screenshot.url}`.replace(/([^:]\/)\/+/g, '$1');
-          await page.goto(targetUrl, { waitUntil: 'networkidle0', timeout: config.navigationTimeout });
+          const response = await page.goto(targetUrl, { waitUntil: 'networkidle0', timeout: config.navigationTimeout });
+
+          let warning = null;
+          const status = response ? response.status() : null;
+          if (status && status >= 500) {
+            warning = `page responded with HTTP ${status} (possible server error)`;
+          } else if (/Whoops\b|Ignition\\Exceptions|<title>\s*Server Error\s*<\/title>/i.test(await page.content())) {
+            warning = 'page HTML matches a Laravel debug-mode error page (Whoops/Ignition) — likely captured an error instead of the intended page';
+          }
 
           // Execute before actions
           for (const action of (screenshot.before || [])) {
@@ -111,7 +119,7 @@ async function main() {
             fs.writeFileSync(filePath, buffer);
           }
 
-          log({ type: 'progress', name: screenshot.name, theme, status: 'done', path: filePath });
+          log({ type: 'progress', name: screenshot.name, theme, status: 'done', path: filePath, warning });
         } catch (err) {
           log({ type: 'progress', name: screenshot.name, theme, status: 'error', error: err.message });
         }

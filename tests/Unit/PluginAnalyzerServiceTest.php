@@ -318,3 +318,187 @@ it('does not treat a config() read with no literal boolean/null default as a gat
 
     expect($analysis->envCandidates)->not->toHaveKey('SHORT_URL_ROUTE_DOMAIN');
 });
+
+function fieldNamed(array $fields, string $name): ?App\DTOs\FieldInfo
+{
+    foreach ($fields as $field) {
+        if ($field->name === $name) {
+            return $field;
+        }
+    }
+
+    return null;
+}
+
+function makeEnumOptionsFixturePlugin(): string
+{
+    $root = sys_get_temp_dir().'/screentest-fixture-enum-'.uniqid();
+
+    mkdir($root.'/src/Enums', recursive: true);
+
+    file_put_contents($root.'/composer.json', json_encode([
+        'name' => 'acme/newsletter',
+        'autoload' => [
+            'psr-4' => [
+                'Acme\\Newsletter\\' => 'src/',
+            ],
+        ],
+        'require' => [
+            'filament/filament' => '^3.0',
+        ],
+    ]));
+
+    file_put_contents($root.'/src/Enums/ContentType.php', <<<'PHP'
+        <?php
+
+        namespace Acme\Newsletter\Enums;
+
+        enum ContentType: string
+        {
+            case RichText = 'rich_text';
+            case Markdown = 'markdown';
+        }
+        PHP);
+
+    // Mirrors jeffersongoncalves/filament-newsletter's content_type Select: the
+    // options() key is an enum case's ->value, not a quoted string literal, and
+    // the label is a __() translation call rather than a literal too.
+    file_put_contents($root.'/src/NewsletterResource.php', <<<'PHP'
+        <?php
+
+        namespace Acme\Newsletter;
+
+        use Filament\Forms\Form;
+        use Filament\Forms\Components\Select;
+        use Filament\Resources\Resource;
+        use Acme\Newsletter\Enums\ContentType;
+
+        class NewsletterResource extends Resource
+        {
+            protected static ?string $model = Newsletter::class;
+
+            public static function form(Form $form): Form
+            {
+                return $form->schema([
+                    Select::make('content_type')
+                        ->options([
+                            ContentType::RichText->value => __('acme.content_types.rich_text'),
+                            ContentType::Markdown->value => __('acme.content_types.markdown'),
+                        ]),
+                    Select::make('status')
+                        ->options([
+                            \Acme\Newsletter\Enums\MissingEnum::Draft->value => __('acme.statuses.draft'),
+                        ]),
+                ]);
+            }
+        }
+        PHP);
+
+    return $root;
+}
+
+it('resolves an enum-backed Select option (EnumClass::Case->value => label()) to the case\'s backing value', function () {
+    $pluginPath = makeEnumOptionsFixturePlugin();
+
+    $analysis = (new PluginAnalyzerService)->analyze($pluginPath);
+
+    $field = fieldNamed($analysis->resources[0]->fields, 'content_type');
+
+    expect($field->options)->toBe([
+        'rich_text' => 'rich_text',
+        'markdown' => 'markdown',
+    ])->and($field->optionsUnresolved)->toBeFalse();
+});
+
+it('falls back to the case name when an enum-backed option\'s class file cannot be resolved, instead of dropping it', function () {
+    $pluginPath = makeEnumOptionsFixturePlugin();
+
+    $analysis = (new PluginAnalyzerService)->analyze($pluginPath);
+
+    $field = fieldNamed($analysis->resources[0]->fields, 'status');
+
+    expect($field->options)->toBe(['Draft' => 'Draft']);
+});
+
+function makeTransitiveDepsFixturePlugin(): string
+{
+    $root = sys_get_temp_dir().'/screentest-fixture-transitive-'.uniqid();
+
+    mkdir($root.'/src', recursive: true);
+    mkdir($root.'/vendor/acme/filament-kit/src', recursive: true);
+    mkdir($root.'/vendor/acme/laravel-media/src', recursive: true);
+
+    file_put_contents($root.'/composer.json', json_encode([
+        'name' => 'acme/filament-newsletter',
+        'autoload' => [
+            'psr-4' => [
+                'Acme\\FilamentNewsletter\\' => 'src/',
+            ],
+        ],
+        'require' => [
+            'filament/filament' => '^3.0',
+            'acme/filament-kit' => '^1.0',
+        ],
+    ]));
+
+    // The --deps package itself has no publishes()/hasMigrations() call — it just
+    // wraps another package that does.
+    file_put_contents($root.'/vendor/acme/filament-kit/composer.json', json_encode([
+        'name' => 'acme/filament-kit',
+        'require' => [
+            'acme/laravel-media' => '^1.0',
+        ],
+    ]));
+
+    file_put_contents($root.'/vendor/acme/filament-kit/src/KitServiceProvider.php', <<<'PHP'
+        <?php
+
+        namespace Acme\FilamentKit;
+
+        class KitServiceProvider
+        {
+            public function register(): void
+            {
+                //
+            }
+        }
+        PHP);
+
+    // Two levels down from the --deps package: this is the one that actually
+    // ships migrations, via spatie/laravel-package-tools' ->hasMigrations() DSL.
+    file_put_contents($root.'/vendor/acme/laravel-media/composer.json', json_encode([
+        'name' => 'acme/laravel-media',
+        'require' => [],
+    ]));
+
+    file_put_contents($root.'/vendor/acme/laravel-media/src/MediaServiceProvider.php', <<<'PHP'
+        <?php
+
+        namespace Acme\LaravelMedia;
+
+        use Spatie\LaravelPackageTools\Package;
+        use Spatie\LaravelPackageTools\PackageServiceProvider;
+
+        class MediaServiceProvider extends PackageServiceProvider
+        {
+            public static string $name = 'laravel-media';
+
+            public function configurePackage(Package $package): void
+            {
+                $package
+                    ->name(static::$name)
+                    ->hasMigrations(['create_media_table']);
+            }
+        }
+        PHP);
+
+    return $root;
+}
+
+it('walks transitive Composer dependencies of a --deps package to find migrations it does not publish itself', function () {
+    $pluginPath = makeTransitiveDepsFixturePlugin();
+
+    $analysis = (new PluginAnalyzerService)->analyze($pluginPath, ['acme/filament-kit']);
+
+    expect($analysis->publishTags)->toBe(['media-migrations']);
+});

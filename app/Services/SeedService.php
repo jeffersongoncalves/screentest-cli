@@ -13,13 +13,25 @@ use App\DTOs\UserConfig;
 
 class SeedService
 {
+    /** @var string[] */
+    protected array $warnings = [];
+
     public function __construct(
         protected ProcessService $process,
         protected PluginAnalyzerService $analyzer,
     ) {}
 
+    /**
+     * @return string[]
+     */
+    public function getWarnings(): array
+    {
+        return $this->warnings;
+    }
+
     public function generateAndRun(ScreentestConfig $config, string $projectPath, string $pluginPath): void
     {
+        $this->warnings = [];
         $seederClasses = [];
 
         // 1. Generate user seeder
@@ -312,9 +324,16 @@ PHP;
         }
 
         if ($field->options !== null && count($field->options) > 0) {
-            $optionsList = implode("', '", $field->options);
+            // The array keys are the actual stored values (e.g. an enum's backing
+            // value or a plain option key) — the labels are display text only and
+            // don't matter for what gets written to the database.
+            $optionsList = implode("', '", array_keys($field->options));
 
             return "\$this->faker->randomElement(['{$optionsList}'])";
+        }
+
+        if ($field->optionsUnresolved) {
+            $this->warnings[] = "could not determine valid options for '{$field->name}', defaulting to a free-text word — likely to write an invalid value";
         }
 
         return '$this->faker->word()';

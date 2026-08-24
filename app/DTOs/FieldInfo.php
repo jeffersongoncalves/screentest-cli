@@ -11,6 +11,7 @@ readonly class FieldInfo
         public bool $isRequired = false,
         public ?string $relationModel = null,
         public ?array $options = null,
+        public bool $optionsUnresolved = false,
     ) {}
 
     public static function fromArray(array $data): self
@@ -22,6 +23,7 @@ readonly class FieldInfo
             isRequired: $data['isRequired'] ?? false,
             relationModel: $data['relationModel'] ?? null,
             options: $data['options'] ?? null,
+            optionsUnresolved: $data['optionsUnresolved'] ?? false,
         );
     }
 }

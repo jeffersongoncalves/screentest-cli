@@ -39,8 +39,9 @@ class PluginAnalyzerService
         $psr4 = $composerData['autoload']['psr-4'] ?? [];
         $resources = $this->detectResources($pluginPath, $psr4);
         $pages = $this->detectPages($pluginPath);
-        $publishTags = $this->detectDependencyPublishTags($pluginPath, $depPackages);
-        $envCandidates = $this->detectDependencyEnvFlags($pluginPath, $depPackages);
+        $expandedDepPackages = $this->expandTransitiveDeps($pluginPath, $depPackages);
+        $publishTags = $this->detectDependencyPublishTags($pluginPath, $expandedDepPackages);
+        $envCandidates = $this->detectDependencyEnvFlags($pluginPath, $expandedDepPackages);
 
         return new PluginAnalysis(
             pluginClass: $pluginClass ?? 'Unknown\\Plugin',
@@ -51,6 +52,56 @@ class PluginAnalyzerService
             publishTags: $publishTags,
             envCandidates: $envCandidates,
         );
+    }
+
+    /**
+     * Walk each given package's own `composer.json` `require` entries (recursively, up to
+     * a depth cap) and return the original packages plus everything transitively required
+     * that's actually installed under vendor/ — so a "kit" package that pulls in a plugin
+     * (e.g. `filament/spatie-laravel-media-library-plugin` pulling in
+     * `spatie/laravel-medialibrary`) gets its own publish tags/env flags picked up too,
+     * not just the packages the caller explicitly listed in --deps.
+     *
+     * @param  string[]  $depPackages
+     * @return string[]
+     */
+    protected function expandTransitiveDeps(string $pluginPath, array $depPackages, int $maxDepth = 3): array
+    {
+        $seen = [];
+        $queue = array_map(fn (string $package) => [trim($package, '/'), 0], $depPackages);
+
+        while ($queue !== []) {
+            [$package, $depth] = array_shift($queue);
+
+            if ($package === '' || isset($seen[$package])) {
+                continue;
+            }
+
+            $seen[$package] = true;
+
+            if ($depth >= $maxDepth) {
+                continue;
+            }
+
+            $composerPath = rtrim($pluginPath, '/').'/vendor/'.$package.'/composer.json';
+
+            if (! is_file($composerPath)) {
+                continue;
+            }
+
+            $data = json_decode((string) file_get_contents($composerPath), true);
+            $require = is_array($data['require'] ?? null) ? $data['require'] : [];
+
+            foreach (array_keys($require) as $requiredPackage) {
+                if (! str_contains($requiredPackage, '/') || str_starts_with($requiredPackage, 'ext-')) {
+                    continue;
+                }
+
+                $queue[] = [$requiredPackage, $depth + 1];
+            }
+        }
+
+        return array_keys($seen);
     }
 
     /**
@@ -427,7 +478,7 @@ class PluginAnalyzerService
             $fqcn = $namespace ? $namespace.'\\'.$className : $className;
             $model = $this->extractModel($content);
             $modelShortName = $model ? class_basename($model) : str_replace('Resource', '', $className);
-            $fields = $this->parseResourceFields($file->getRealPath());
+            $fields = $this->parseResourceFields($file->getRealPath(), $pluginPath, $psr4);
 
             // Most Filament plugins split the form schema into a dedicated
             // `SomethingForm::configure($schema)` class rather than inlining
@@ -562,7 +613,7 @@ class PluginAnalyzerService
             return [];
         }
 
-        return $this->parseResourceFields($path);
+        return $this->parseResourceFields($path, $pluginPath, $psr4);
     }
 
     /**
@@ -646,9 +697,10 @@ class PluginAnalyzerService
     /**
      * Parse a Resource file to extract Filament field components from the form() method.
      *
+     * @param  array<string, string>  $psr4
      * @return FieldInfo[]
      */
-    protected function parseResourceFields(string $filePath): array
+    protected function parseResourceFields(string $filePath, string $pluginPath = '', array $psr4 = []): array
     {
         $content = file_get_contents($filePath);
 
@@ -685,8 +737,17 @@ class PluginAnalyzerService
 
             // Extract options array for Select fields
             $options = null;
+            $optionsUnresolved = false;
             if ($component === 'Select' && preg_match('/->options\s*\(\s*\[([^\]]*)\]\s*\)/', $chainContent, $optMatch)) {
-                $options = $this->parseOptionsArray($optMatch[1]);
+                $options = $this->parseOptionsArray($optMatch[1], $content, $pluginPath, $psr4);
+
+                // The options() array literal is there but nothing in it matched a
+                // recognizable key/value shape — most commonly an enum-backed key
+                // whose class we couldn't resolve. Flag it so the seeder can warn
+                // instead of silently writing an arbitrary word into an enum column.
+                if ($options === [] && str_contains($optMatch[1], '::') && str_contains($optMatch[1], '->value')) {
+                    $optionsUnresolved = true;
+                }
             }
 
             $fields[] = new FieldInfo(
@@ -696,6 +757,7 @@ class PluginAnalyzerService
                 isRequired: $isRequired,
                 relationModel: $relationModel,
                 options: $options,
+                optionsUnresolved: $optionsUnresolved,
             );
         }
 
@@ -800,22 +862,74 @@ class PluginAnalyzerService
     }
 
     /**
-     * Parse a simple options array string like "'draft' => 'Draft', 'published' => 'Published'"
-     * into an associative array.
+     * Parse an options array string like "'draft' => 'Draft', 'published' => 'Published'"
+     * into an associative array. Also recognizes the common enum-backed shape
+     * `EnumClass::Case->value => __('some.label')`: an enum case reference as the key
+     * (resolved to its actual backing value by reading the enum's source, falling back to
+     * the case name itself when that can't be resolved) and a function call as the label
+     * (its return value doesn't matter for seeding — only the option *keys* do).
      *
+     * @param  array<string, string>  $psr4
      * @return array<string, string>
      */
-    private function parseOptionsArray(string $optionsString): array
+    private function parseOptionsArray(string $optionsString, string $fileContent = '', string $pluginPath = '', array $psr4 = []): array
     {
         $options = [];
 
-        // Match key => value pairs with string keys and values
-        if (preg_match_all('/[\'"]([^\'"]+)[\'"]\s*=>\s*[\'"]([^\'"]+)[\'"]/', $optionsString, $pairs, PREG_SET_ORDER)) {
+        $pattern = '/'
+            .'(?:[\'"](?<keyLiteral>[^\'"]+)[\'"]|(?<keyEnumClass>\\\\?[A-Za-z_][A-Za-z0-9_\\\\]*)::(?<keyEnumCase>[A-Za-z_][A-Za-z0-9_]*)->value)'
+            .'\s*=>\s*'
+            .'(?:[\'"](?<value>[^\'"]*)[\'"]|[A-Za-z_][A-Za-z0-9_]*\s*\([^()]*\))'
+            .'/';
+
+        if (preg_match_all($pattern, $optionsString, $pairs, PREG_SET_ORDER)) {
             foreach ($pairs as $pair) {
-                $options[$pair[1]] = $pair[2];
+                if (($pair['keyLiteral'] ?? '') !== '') {
+                    $key = $pair['keyLiteral'];
+                } else {
+                    $key = $this->resolveEnumCaseValue($pair['keyEnumClass'], $pair['keyEnumCase'], $fileContent, $pluginPath, $psr4)
+                        ?? $pair['keyEnumCase'];
+                }
+
+                $options[$key] = ($pair['value'] ?? '') !== '' ? $pair['value'] : $key;
             }
         }
 
         return $options;
+    }
+
+    /**
+     * Resolve a `EnumClass::CaseName->value` reference to the case's actual backing
+     * literal by locating the enum's source file (via `use` imports + PSR-4) and reading
+     * its `case CaseName = '...';` declaration. Returns null if any step can't be resolved
+     * (short-circuits cheaply since PSR-4/pluginPath is usually unavailable for plain
+     * string-literal options, the common case).
+     *
+     * @param  array<string, string>  $psr4
+     */
+    private function resolveEnumCaseValue(string $classRef, string $caseName, string $fileContent, string $pluginPath, array $psr4): ?string
+    {
+        if ($psr4 === [] || $pluginPath === '') {
+            return null;
+        }
+
+        $fqcn = $this->resolveClassReference($classRef, $fileContent) ?? ltrim($classRef, '\\');
+        $path = $this->fqcnToPath($fqcn, $pluginPath, $psr4);
+
+        if ($path === null || ! is_file($path)) {
+            return null;
+        }
+
+        $content = file_get_contents($path);
+
+        if ($content === false) {
+            return null;
+        }
+
+        if (preg_match('/case\s+'.preg_quote($caseName, '/').'\s*=\s*[\'"]([^\'"]+)[\'"]/', $content, $match)) {
+            return $match[1];
+        }
+
+        return null;
     }
 }

@@ -69,6 +69,10 @@ class RunCommand extends Command
                 $this->task('Generating and running seeds', function () use ($seed, $config, $projectPath, $pluginPath) {
                     $seed->generateAndRun($config, $projectPath, $pluginPath);
                 });
+
+                foreach ($seed->getWarnings() as $warning) {
+                    $this->warn($warning);
+                }
             }
 
             // Step 3: Server (conditional)
@@ -103,6 +107,14 @@ class RunCommand extends Command
                     $this->warn(count($failed).' screenshots failed:');
                     foreach ($failed as $result) {
                         $this->line("  - {$result->name} ({$result->theme}): {$result->error}");
+                    }
+                }
+
+                $warned = array_filter($successful, fn ($r) => $r->warning !== null);
+                if (! empty($warned)) {
+                    $this->warn(count($warned).' screenshot(s) may have captured an error page:');
+                    foreach ($warned as $result) {
+                        $this->line("  - {$result->name} ({$result->theme}): {$result->warning}");
                     }
                 }
 

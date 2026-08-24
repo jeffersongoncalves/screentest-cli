@@ -10,6 +10,7 @@ readonly class CaptureResult
         public string $path,
         public bool $success,
         public ?string $error = null,
+        public ?string $warning = null,
     ) {}
 
     public static function fromArray(array $data): self
@@ -20,6 +21,7 @@ readonly class CaptureResult
             path: $data['path'],
             success: $data['success'],
             error: $data['error'] ?? null,
+            warning: $data['warning'] ?? null,
         );
     }
 }

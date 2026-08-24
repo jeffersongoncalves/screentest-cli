@@ -128,6 +128,12 @@ class CaptureCommand extends Command
             ], $results),
         );
 
+        foreach ($results as $result) {
+            if ($result->warning !== null) {
+                $this->warn("{$result->name} ({$result->theme}): {$result->warning}");
+            }
+        }
+
         $this->newLine();
         $this->info("Done! {$successCount} captured, {$failCount} failed.");
 
