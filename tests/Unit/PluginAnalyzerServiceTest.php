@@ -503,3 +503,55 @@ it('walks transitive Composer dependencies of a --deps package to find migration
 
     expect($analysis->publishTags)->toBe(['media-migrations']);
 });
+
+function makeSingularHasMigrationFixturePlugin(): string
+{
+    $root = sys_get_temp_dir().'/screentest-fixture-singular-migration-'.uniqid();
+
+    mkdir($root.'/src', recursive: true);
+    mkdir($root.'/vendor/spatie/laravel-medialibrary/src', recursive: true);
+
+    file_put_contents($root.'/composer.json', json_encode([
+        'name' => 'acme/filament-newsletter',
+        'autoload' => [
+            'psr-4' => [
+                'Acme\\FilamentNewsletter\\' => 'src/',
+            ],
+        ],
+        'require' => [
+            'filament/filament' => '^3.0',
+            'spatie/laravel-medialibrary' => '^11.0',
+        ],
+    ]));
+
+    // spatie/laravel-medialibrary's real MediaLibraryServiceProvider calls the
+    // *singular* ->hasMigration(), not ->hasMigrations() — must still be recognized.
+    file_put_contents($root.'/vendor/spatie/laravel-medialibrary/src/MediaLibraryServiceProvider.php', <<<'PHP'
+        <?php
+
+        namespace Spatie\MediaLibrary;
+
+        use Spatie\LaravelPackageTools\Package;
+        use Spatie\LaravelPackageTools\PackageServiceProvider;
+
+        class MediaLibraryServiceProvider extends PackageServiceProvider
+        {
+            public function configurePackage(Package $package): void
+            {
+                $package
+                    ->name('laravel-medialibrary')
+                    ->hasMigration('create_media_table');
+            }
+        }
+        PHP);
+
+    return $root;
+}
+
+it('recognizes the singular ->hasMigration() DSL call, not just the plural ->hasMigrations()', function () {
+    $pluginPath = makeSingularHasMigrationFixturePlugin();
+
+    $analysis = (new PluginAnalyzerService)->analyze($pluginPath, ['spatie/laravel-medialibrary']);
+
+    expect($analysis->publishTags)->toBe(['medialibrary-migrations']);
+});

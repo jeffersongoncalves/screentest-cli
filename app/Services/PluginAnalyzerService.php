@@ -112,7 +112,8 @@ class PluginAnalyzerService
      *
      * Two patterns are recognized:
      * - A direct `publishes()`/`publishesMigrations()` call with an explicit tag argument.
-     * - The `spatie/laravel-package-tools` DSL (`->name('x')->hasMigrations([...])`), which
+     * - The `spatie/laravel-package-tools` DSL (`->name('x')->hasMigrations([...])`, or its
+     *   singular sibling `->hasMigration('...')` — e.g. `spatie/laravel-medialibrary`), which
      *   generates the tag internally as "{shortName}-migrations" with no literal
      *   `publishes*()` call anywhere in the source — see `Package::shortName()`.
      *
@@ -137,7 +138,7 @@ class PluginAnalyzerService
                 }
             }
 
-            if (str_contains($content, 'hasMigrations(')
+            if (preg_match('/hasMigrations?\s*\(/', $content)
                 && preg_match('/->name\s*\(\s*([^)]+?)\s*\)/', $content, $nameMatch)) {
                 $packageName = $this->resolvePackageNameExpression($nameMatch[1], $content);
 
