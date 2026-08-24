@@ -271,7 +271,7 @@ class PluginAnalyzerService
         }
 
         $finder = new Finder;
-        $finder->files()->in($srcPath)->name('*.php');
+        $finder->files()->in($srcPath)->name('*.php')->sortByName();
 
         $keys = [];
 
