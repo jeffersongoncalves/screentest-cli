@@ -1,5 +1,6 @@
 <?php
 
+use App\DTOs\FieldInfo;
 use App\Enums\FilamentVersion;
 use App\Services\PluginAnalyzerService;
 
@@ -319,7 +320,7 @@ it('does not treat a config() read with no literal boolean/null default as a gat
     expect($analysis->envCandidates)->not->toHaveKey('SHORT_URL_ROUTE_DOMAIN');
 });
 
-function fieldNamed(array $fields, string $name): ?App\DTOs\FieldInfo
+function fieldNamed(array $fields, string $name): ?FieldInfo
 {
     foreach ($fields as $field) {
         if ($field->name === $name) {
