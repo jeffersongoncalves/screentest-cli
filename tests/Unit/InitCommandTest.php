@@ -133,6 +133,32 @@ it('turns a selected signed route into a screenshot entry with routeParams/signe
     ]);
 });
 
+it('omits seed.user for a non-Filament package (nothing to log into) but keeps it for a real Filament plugin', function () {
+    $command = new InitCommand;
+
+    $resolve = Closure::bind(
+        fn (?array $existingUser, PluginAnalysis $analysis) => $this->resolveUserConfig($existingUser, $analysis),
+        $command,
+        InitCommand::class,
+    );
+
+    $nonFilament = new PluginAnalysis(pluginClass: null, package: 'acme/newsletter', filamentVersion: null);
+    $filament = new PluginAnalysis(pluginClass: 'Acme\\NewsletterPlugin', package: 'acme/newsletter', filamentVersion: null);
+
+    expect($resolve(null, $nonFilament))->toBeNull()
+        ->and($resolve(null, $filament))->toBe([
+            'email' => 'admin@example.com',
+            'password' => 'password',
+            'name' => 'Admin User',
+        ]);
+
+    // A manually curated "user" block (e.g. the non-Filament package has its own
+    // login screen) is never silently dropped just because there's no Filament plugin.
+    $existingUser = ['email' => 'custom@example.com', 'password' => 'secret', 'name' => 'Custom'];
+
+    expect($resolve($existingUser, $nonFilament))->toBe($existingUser);
+});
+
 it('skips a route with a required param that is not route-model-bound instead of guessing a wrong default', function () {
     $command = new InitCommand;
 

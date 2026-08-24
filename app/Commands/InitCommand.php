@@ -154,6 +154,9 @@ class InitCommand extends Command
         $existingEnv = is_array($existingConfig['install']['env'] ?? null) ? $existingConfig['install']['env'] : [];
         $existingModels = is_array($existingConfig['seed']['models'] ?? null) ? $existingConfig['seed']['models'] : [];
         $existingScreenshots = is_array($existingConfig['screenshots'] ?? null) ? $existingConfig['screenshots'] : [];
+        $existingUser = is_array($existingConfig['seed']['user'] ?? null) ? $existingConfig['seed']['user'] : null;
+
+        $userConfig = $this->resolveUserConfig($existingUser, $analysis);
 
         // Build the config array
         $config = [
@@ -178,11 +181,7 @@ class InitCommand extends Command
             ],
             'seed' => [
                 'auto_detect' => true,
-                'user' => [
-                    'email' => 'admin@example.com',
-                    'password' => 'password',
-                    'name' => 'Admin User',
-                ],
+                ...($userConfig !== null ? ['user' => $userConfig] : []),
                 'models' => $this->mergeByKey($existingModels, $this->buildModelSeedConfig($selectedScreenshots, $analysis), 'model'),
             ],
             'screenshots' => $this->mergeScreenshots($existingScreenshots, $this->buildScreenshotsConfig($selectedScreenshots, $analysis)),
@@ -269,6 +268,25 @@ class InitCommand extends Command
         $this->info('Run "screentest capture" to generate screenshots.');
 
         return self::SUCCESS;
+    }
+
+    /**
+     * Login credentials only matter for logging into a Filament panel — a plain
+     * package has nothing at /admin/login to authenticate against, so there's nothing
+     * to configure by default. Still honor a manually added "user" block though (an
+     * existing config that's already been curated for it, e.g. because the package
+     * has its own non-Filament login screen).
+     *
+     * @param  array<string, string>|null  $existingUser
+     * @return array<string, string>|null
+     */
+    private function resolveUserConfig(?array $existingUser, PluginAnalysis $analysis): ?array
+    {
+        return $existingUser ?? ($analysis->pluginClass !== null ? [
+            'email' => 'admin@example.com',
+            'password' => 'password',
+            'name' => 'Admin User',
+        ] : null);
     }
 
     /**
