@@ -16,6 +16,25 @@ it('uses base_path(stubs/docker) directly when not running from a phar', functio
     expect($context)->toBe(base_path('stubs/docker'));
 });
 
+it('signs a route absolute (Laravel\'s default) instead of relative, since ValidateSignature validates against the absolute URL', function () {
+    // Regression for #14: URL::signedRoute(..., null, false) signs the relative
+    // path, but the `signed` middleware's hasValidSignature() defaults to
+    // validating the ABSOLUTE URL — that mismatch made every signed screenshot
+    // fail with a 403 "Invalid signature", the exact case this feature exists for.
+    $stub = file_get_contents(base_path('stubs/resolve_urls.php.stub'));
+
+    expect($stub)->not->toContain('null, false')
+        ->and($stub)->toContain("URL::signedRoute(\$entry['route'], \$entry['params'])")
+        ->and($stub)->toContain("config('app.url')");
+
+    $service = new CaptureService(new ProcessService);
+    $embedded = Closure::bind(fn () => $this->buildUrlResolverScript('dummy'), $service, CaptureService::class)();
+
+    expect($embedded)->not->toContain('null, false')
+        ->and($embedded)->toContain('URL::signedRoute(')
+        ->and($embedded)->toContain("config('app.url')");
+});
+
 it('resolves a signed-route screenshot to the URL the temp project\'s own artisan command produced', function () {
     Process::fake([
         '*screentest:resolve-urls*' => Process::result(output: json_encode([

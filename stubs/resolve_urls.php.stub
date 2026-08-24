@@ -19,9 +19,23 @@ class ScreentestResolveUrls extends Command
 
         foreach ($entries as $entry) {
             try {
-                $url = $entry['signed']
-                    ? URL::signedRoute($entry['route'], $entry['params'], null, false)
-                    : route($entry['route'], $entry['params'], false);
+                if ($entry['signed']) {
+                    // ValidateSignature middleware calls hasValidSignature() with no
+                    // arguments, which validates against the ABSOLUTE URL — sign
+                    // relative here and the HMAC can never match. Sign absolute (the
+                    // default), then strip the scheme+host back off: APP_URL is forced
+                    // to match the capture baseUrl exactly, so re-prefixing this
+                    // stripped string with baseUrl reassembles the exact absolute
+                    // string that was signed.
+                    $url = URL::signedRoute($entry['route'], $entry['params']);
+                    $appUrl = rtrim(config('app.url'), '/');
+
+                    if (str_starts_with($url, $appUrl)) {
+                        $url = substr($url, strlen($appUrl));
+                    }
+                } else {
+                    $url = route($entry['route'], $entry['params'], false);
+                }
 
                 $results[$entry['name']] = ['url' => $url];
             } catch (\Throwable $e) {
