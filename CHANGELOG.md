@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.32] - 2026-08-24
+
+### Bug Fixes
+
+- Recognize singular ->hasMigration() DSL call, not just plural
+
 ## [1.0.31] - 2026-08-24
 
 ### Bug Fixes
