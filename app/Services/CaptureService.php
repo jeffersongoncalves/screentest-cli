@@ -365,6 +365,8 @@ async function main() {
           const status = response ? response.status() : null;
           if (status && status >= 500) {
             warning = `page responded with HTTP \${status} (possible server error)`;
+          } else if (status && status >= 400) {
+            warning = `page responded with HTTP \${status} (auth/signature/not-found — check the URL and any required auth/signing)`;
           } else if (/Whoops\b|Ignition\\Exceptions|<title>\s*Server Error\s*<\/title>/i.test(await page.content())) {
             warning = 'page HTML matches a Laravel debug-mode error page (Whoops/Ignition) — likely captured an error instead of the intended page';
           }

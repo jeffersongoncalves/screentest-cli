@@ -78,6 +78,12 @@ class InitCommand extends Command
             return self::FAILURE;
         }
 
+        if ($analysis->pluginClass === null) {
+            $this->warn('No Filament Plugin class detected — this doesn\'t look like a Filament plugin. '
+                .'"install.plugins" will be left empty and "screenshots" will need to be filled in manually.');
+            $this->newLine();
+        }
+
         $interactive = $this->input->isInteractive();
 
         // Build screenshot options from detected resources
@@ -144,12 +150,12 @@ class InitCommand extends Command
             ],
             'install' => [
                 'extra_packages' => [],
-                'plugins' => [
+                'plugins' => $analysis->pluginClass !== null ? [
                     [
                         'class' => $analysis->pluginClass,
                         'panel' => 'admin',
                     ],
-                ],
+                ] : [],
                 'publish' => $analysis->publishTags,
                 'post_install_commands' => ['migrate'],
                 'env' => $analysis->envCandidates,
@@ -224,8 +230,9 @@ class InitCommand extends Command
     private function guessPluginName(PluginAnalysis $analysis): string
     {
         // Try to extract name from the plugin class (e.g., "MyPlugin" -> "My Plugin")
-        $className = class_basename($analysis->pluginClass);
-        $className = str_replace('Plugin', '', $className);
+        $className = $analysis->pluginClass !== null
+            ? str_replace('Plugin', '', class_basename($analysis->pluginClass))
+            : '';
 
         if (! empty($className)) {
             // Convert PascalCase to words with spaces
@@ -277,21 +284,21 @@ class InitCommand extends Command
 
             if (in_array("{$name}-list", $selectedKeys, true)) {
                 $screenshots[] = [
-                    'name' => strtolower($name).'-list',
+                    'name' => "{$slug}-list",
                     'url' => "/admin/{$pluralSlug}",
                 ];
             }
 
             if (in_array("{$name}-create", $selectedKeys, true)) {
                 $screenshots[] = [
-                    'name' => strtolower($name).'-create',
+                    'name' => "{$slug}-create",
                     'url' => "/admin/{$pluralSlug}/create",
                 ];
             }
 
             if (in_array("{$name}-edit", $selectedKeys, true)) {
                 $screenshots[] = [
-                    'name' => strtolower($name).'-edit',
+                    'name' => "{$slug}-edit",
                     'url' => "/admin/{$pluralSlug}/1/edit",
                 ];
             }

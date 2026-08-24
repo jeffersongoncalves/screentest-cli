@@ -84,7 +84,7 @@ Add the confirmed tag(s) to `install.publish` in `screentest.json`. `post_instal
 
 **If the plugin is a thin wrapper around another package** (a common `jeffersongoncalves/filament-*` "kit" pattern — a Filament plugin around a standalone service package), the plugin's own `src/` has none of this: no `publishes()`, no `env()` calls. Pass the wrapped package to `init --deps=` and the analyzer scans `vendor/<package>/` too, auto-populating `install.publish` (from `publishes()`/`publishesMigrations()` tags) and `install.env` (from `env('FLAG', false)` reads that default to disabled) — see the `init` section above. This also walks that package's own `composer.json` `require` entries (up to 3 levels), so a common dependency like `spatie/laravel-medialibrary` pulled in transitively via `filament/spatie-laravel-media-library-plugin` gets picked up too, without needing to pass it to `--deps` explicitly.
 
-**Safety net:** `capture`/`run` now flag a captured screenshot with a warning (printed after the run, doesn't fail the pipeline) when the page's HTTP status is 5xx or its HTML matches a Laravel debug-mode error page (Whoops/Ignition) — so a missed publish tag surfaces in the CLI output instead of only being visible by opening the PNG.
+**Safety net:** `capture`/`run` now flag a captured screenshot with a warning (printed after the run, doesn't fail the pipeline) when the page's HTTP status is 4xx/5xx or its HTML matches a Laravel debug-mode error page (Whoops/Ignition) — so a missed publish tag, or a URL pointed at an auth/signature-gated route, surfaces in the CLI output instead of only being visible by opening the PNG.
 
 ### `install.env` — feature flags gating resource registration
 

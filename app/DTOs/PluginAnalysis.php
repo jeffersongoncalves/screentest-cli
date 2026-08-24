@@ -7,7 +7,7 @@ use App\Enums\FilamentVersion;
 readonly class PluginAnalysis
 {
     public function __construct(
-        public string $pluginClass,
+        public ?string $pluginClass,
         public string $package,
         public ?FilamentVersion $filamentVersion,
         public array $resources = [],
@@ -20,7 +20,7 @@ readonly class PluginAnalysis
     public static function fromArray(array $data): self
     {
         return new self(
-            pluginClass: $data['pluginClass'],
+            pluginClass: $data['pluginClass'] ?? null,
             package: $data['package'],
             filamentVersion: isset($data['filamentVersion']) ? FilamentVersion::from($data['filamentVersion']) : null,
             resources: isset($data['resources']) ? array_map(

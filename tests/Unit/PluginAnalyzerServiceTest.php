@@ -555,3 +555,50 @@ it('recognizes the singular ->hasMigration() DSL call, not just the plural ->has
 
     expect($analysis->publishTags)->toBe(['medialibrary-migrations']);
 });
+
+function makeNonFilamentPackageFixturePlugin(): string
+{
+    $root = sys_get_temp_dir().'/screentest-fixture-no-plugin-'.uniqid();
+
+    mkdir($root.'/src', recursive: true);
+
+    file_put_contents($root.'/composer.json', json_encode([
+        'name' => 'acme/laravel-newsletter',
+        'autoload' => [
+            'psr-4' => [
+                'Acme\\LaravelNewsletter\\' => 'src/',
+            ],
+        ],
+        'require' => [
+            'illuminate/support' => '^11.0',
+        ],
+    ]));
+
+    // A plain Laravel package with public routes/views but no Filament dependency
+    // at all — no Plugin class anywhere in src/.
+    file_put_contents($root.'/src/NewsletterServiceProvider.php', <<<'PHP'
+        <?php
+
+        namespace Acme\LaravelNewsletter;
+
+        use Illuminate\Support\ServiceProvider;
+
+        class NewsletterServiceProvider extends ServiceProvider
+        {
+            public function boot(): void
+            {
+                //
+            }
+        }
+        PHP);
+
+    return $root;
+}
+
+it('leaves pluginClass null instead of a fake "Unknown\\Plugin" fallback when no Filament Plugin class exists', function () {
+    $pluginPath = makeNonFilamentPackageFixturePlugin();
+
+    $analysis = (new PluginAnalyzerService)->analyze($pluginPath);
+
+    expect($analysis->pluginClass)->toBeNull();
+});

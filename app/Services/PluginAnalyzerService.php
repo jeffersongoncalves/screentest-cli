@@ -44,7 +44,7 @@ class PluginAnalyzerService
         $envCandidates = $this->detectDependencyEnvFlags($pluginPath, $expandedDepPackages);
 
         return new PluginAnalysis(
-            pluginClass: $pluginClass ?? 'Unknown\\Plugin',
+            pluginClass: $pluginClass,
             package: $package,
             filamentVersion: $filamentVersion,
             resources: $resources,
