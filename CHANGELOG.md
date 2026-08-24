@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.35] - 2026-08-24
+
+### Features
+
+- **init:** Auto-detect named routes for non-Filament packages
+
 ## [1.0.34] - 2026-08-24
 
 ### Bug Fixes
