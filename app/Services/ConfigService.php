@@ -101,8 +101,8 @@ class ConfigService
                 if (! isset($screenshot['name'])) {
                     $errors[] = "Missing required field: screenshots[{$i}].name";
                 }
-                if (! isset($screenshot['url'])) {
-                    $errors[] = "Missing required field: screenshots[{$i}].url";
+                if (! isset($screenshot['url']) && ! isset($screenshot['route'])) {
+                    $errors[] = "Missing required field: screenshots[{$i}].url (or screenshots[{$i}].route)";
                 }
             }
         }

@@ -36,11 +36,141 @@ class CaptureService
 
         [$resolvedBaseUrl, $extraHost] = $this->resolveDockerBaseUrl($baseUrl);
 
-        $this->generateCaptureScript($config, $projectPath, $resolvedBaseUrl);
+        [$urlOverrides, $resolutionFailures] = $this->resolveRouteUrls($config, $projectPath);
 
-        $results = $this->executeCaptureScript($projectPath, $extraHost);
+        $this->generateCaptureScript($config, $projectPath, $resolvedBaseUrl, $urlOverrides);
+
+        $results = [...$resolutionFailures, ...$this->executeCaptureScript($projectPath, $extraHost)];
 
         return $this->copyToPlugin($results, $config, $projectPath, $pluginPath);
+    }
+
+    /**
+     * A screenshot can target a named route (optionally signed) instead of a literal
+     * `url` — the signature/URL generation depends on the temp project's own APP_KEY
+     * and route definitions, so it can only happen inside that project, not from this
+     * CLI process or the capture container. Generates a throwaway artisan command in
+     * the temp project, runs it once, and returns [name => url] overrides plus a
+     * failed CaptureResult (one per configured theme) for anything that didn't resolve
+     * — a signed route with a bad/missing param is a config error, not something the
+     * browser navigation try/catch in the capture script would ever see.
+     *
+     * @return array{0: array<string, string>, 1: array<CaptureResult>}
+     */
+    protected function resolveRouteUrls(ScreentestConfig $config, string $projectPath): array
+    {
+        $routeScreenshots = array_values(array_filter(
+            $config->screenshots,
+            fn (ScreenshotConfig $screenshot) => $screenshot->route !== null,
+        ));
+
+        if ($routeScreenshots === []) {
+            return [[], []];
+        }
+
+        $this->writeUrlResolverCommand($projectPath, $routeScreenshots);
+
+        $result = $this->process->artisan('screentest:resolve-urls', $projectPath);
+
+        $resolved = $result->successful() ? json_decode($result->output(), true) : null;
+        $resolved = is_array($resolved) ? $resolved : [];
+
+        $overrides = [];
+        $failures = [];
+        $themes = array_map(fn ($theme) => $theme->value, $config->output->themes);
+
+        foreach ($routeScreenshots as $screenshot) {
+            $entry = $resolved[$screenshot->name] ?? null;
+
+            if (is_array($entry) && isset($entry['url'])) {
+                $overrides[$screenshot->name] = $entry['url'];
+
+                continue;
+            }
+
+            $error = is_array($entry) && isset($entry['error'])
+                ? $entry['error']
+                : 'route resolver command did not run: '.$result->errorOutput().$result->output();
+
+            foreach ($themes as $theme) {
+                $failures[] = new CaptureResult(
+                    name: $screenshot->name,
+                    theme: $theme,
+                    path: '',
+                    success: false,
+                    error: "could not resolve route '{$screenshot->route}': {$error}",
+                );
+            }
+        }
+
+        return [$overrides, $failures];
+    }
+
+    /**
+     * @param  array<ScreenshotConfig>  $routeScreenshots
+     */
+    protected function writeUrlResolverCommand(string $projectPath, array $routeScreenshots): void
+    {
+        $entries = array_map(fn (ScreenshotConfig $screenshot) => [
+            'name' => $screenshot->name,
+            'route' => $screenshot->route,
+            'params' => $screenshot->routeParams,
+            'signed' => $screenshot->signed,
+        ], $routeScreenshots);
+
+        $entriesB64 = base64_encode(json_encode($entries));
+
+        $stubPath = base_path('stubs/resolve_urls.php.stub');
+
+        $script = File::exists($stubPath)
+            ? str_replace('{{ENTRIES_B64}}', $entriesB64, File::get($stubPath))
+            : $this->buildUrlResolverScript($entriesB64);
+
+        $commandPath = $projectPath.'/app/Console/Commands/ScreentestResolveUrls.php';
+        File::ensureDirectoryExists(dirname($commandPath));
+        File::put($commandPath, $script);
+    }
+
+    protected function buildUrlResolverScript(string $entriesB64): string
+    {
+        return <<<PHP
+<?php
+
+namespace App\Console\Commands;
+
+use Illuminate\Console\Command;
+use Illuminate\Support\Facades\URL;
+
+class ScreentestResolveUrls extends Command
+{
+    protected \$signature = 'screentest:resolve-urls';
+
+    protected \$description = 'Resolve named-route/signed-route screenshot URLs for the screentest capture step';
+
+    public function handle(): int
+    {
+        \$entries = json_decode(base64_decode('{$entriesB64}'), true) ?? [];
+
+        \$results = [];
+
+        foreach (\$entries as \$entry) {
+            try {
+                \$url = \$entry['signed']
+                    ? URL::signedRoute(\$entry['route'], \$entry['params'], null, false)
+                    : route(\$entry['route'], \$entry['params'], false);
+
+                \$results[\$entry['name']] = ['url' => \$url];
+            } catch (\Throwable \$e) {
+                \$results[\$entry['name']] = ['error' => \$e->getMessage()];
+            }
+        }
+
+        \$this->line(json_encode(\$results));
+
+        return self::SUCCESS;
+    }
+}
+PHP;
     }
 
     /**
@@ -117,9 +247,21 @@ class CaptureService
         return $target.'/stubs/docker';
     }
 
-    protected function generateCaptureScript(ScreentestConfig $config, string $projectPath, string $baseUrl): string
+    /**
+     * @param  array<string, string>  $urlOverrides  name => resolved URL, for screenshots
+     *                                               that used `route`/`signed` instead of a literal `url`
+     */
+    protected function generateCaptureScript(ScreentestConfig $config, string $projectPath, string $baseUrl, array $urlOverrides = []): string
     {
         $navigationTimeout = config('screentest.capture.navigation_timeout', 30000);
+
+        // A route that failed to resolve has no URL to navigate to at all — it's
+        // already reported as a failed CaptureResult by resolveRouteUrls(), so it's
+        // left out here rather than handed to the browser with an empty/null url.
+        $capturableScreenshots = array_values(array_filter(
+            $config->screenshots,
+            fn (ScreenshotConfig $screenshot) => $screenshot->route === null || isset($urlOverrides[$screenshot->name]),
+        ));
 
         $configData = [
             'baseUrl' => $baseUrl,
@@ -129,7 +271,7 @@ class CaptureService
             ],
             'screenshots' => array_map(fn (ScreenshotConfig $screenshot) => [
                 'name' => $screenshot->name,
-                'url' => $screenshot->url,
+                'url' => $urlOverrides[$screenshot->name] ?? $screenshot->url,
                 'selector' => $screenshot->selector,
                 'before' => array_map(fn (BeforeAction $action) => array_filter([
                     'action' => $action->action->value,
@@ -149,7 +291,7 @@ class CaptureService
                     'deviceScaleFactor' => $screenshot->viewport->deviceScaleFactor,
                 ] : null,
                 'fullPage' => $screenshot->fullPage,
-            ], $config->screenshots),
+            ], $capturableScreenshots),
             'themes' => array_map(fn ($theme) => $theme->value, $config->output->themes),
             'viewport' => [
                 'width' => 1920,

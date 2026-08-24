@@ -116,6 +116,16 @@ These get written into the temp project's `.env` before install/seed/serve — s
 
 `seed.models` must create at least one row of the right model *before* any `.../1/edit`-style URL in `screenshots` is captured — auto-detected seeding (`seed.auto_detect: true`) usually covers this, but if a model has required relations the factory doesn't fill in, seeding can throw and silently leave the table empty. Check `Generating and running seeds: ✔` isn't hiding a partial failure by spot-checking row counts if an edit screenshot looks wrong.
 
+### Screenshot URLs behind Laravel's `signed` middleware
+
+A literal `url` can't carry a valid signature — it depends on the temp project's own `APP_KEY`, which this CLI never sees. Use `route`/`routeParams`/`signed` instead of `url`:
+
+```json
+{ "name": "confirm", "route": "newsletter.confirm", "routeParams": { "emailGroupMember": 1 }, "signed": true }
+```
+
+Before capture, `CaptureService::resolveRouteUrls()` drops a throwaway `app/Console/Commands/ScreentestResolveUrls.php` into the temp project and runs `php artisan screentest:resolve-urls` there — it's the only place `URL::signedRoute()` can produce a signature that will actually validate. `signed: false` (or omitted) still resolves the route by name via the plain `route()` helper, useful for a named route whose path you don't want to hardcode. A route that fails to resolve (bad param, unknown route name) shows up as a normal failed `CaptureResult` per theme — it never reaches the browser with an empty URL.
+
 ## Troubleshooting checklist (symptom → cause)
 
 | Screenshot looks like... | Likely cause |

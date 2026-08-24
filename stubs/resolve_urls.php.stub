@@ -1,0 +1,36 @@
+<?php
+
+namespace App\Console\Commands;
+
+use Illuminate\Console\Command;
+use Illuminate\Support\Facades\URL;
+
+class ScreentestResolveUrls extends Command
+{
+    protected $signature = 'screentest:resolve-urls';
+
+    protected $description = 'Resolve named-route/signed-route screenshot URLs for the screentest capture step';
+
+    public function handle(): int
+    {
+        $entries = json_decode(base64_decode('{{ENTRIES_B64}}'), true) ?? [];
+
+        $results = [];
+
+        foreach ($entries as $entry) {
+            try {
+                $url = $entry['signed']
+                    ? URL::signedRoute($entry['route'], $entry['params'], null, false)
+                    : route($entry['route'], $entry['params'], false);
+
+                $results[$entry['name']] = ['url' => $url];
+            } catch (\Throwable $e) {
+                $results[$entry['name']] = ['error' => $e->getMessage()];
+            }
+        }
+
+        $this->line(json_encode($results));
+
+        return self::SUCCESS;
+    }
+}

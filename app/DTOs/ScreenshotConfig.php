@@ -6,7 +6,10 @@ readonly class ScreenshotConfig
 {
     public function __construct(
         public string $name,
-        public string $url,
+        public ?string $url = null,
+        public ?string $route = null,
+        public array $routeParams = [],
+        public bool $signed = false,
         public string $selector = 'body',
         public ?ViewportConfig $viewport = null,
         public array $before = [],
@@ -18,7 +21,10 @@ readonly class ScreenshotConfig
     {
         return new self(
             name: $data['name'],
-            url: $data['url'],
+            url: $data['url'] ?? null,
+            route: $data['route'] ?? null,
+            routeParams: $data['routeParams'] ?? [],
+            signed: $data['signed'] ?? false,
             selector: $data['selector'] ?? 'body',
             viewport: isset($data['viewport']) ? ViewportConfig::fromArray($data['viewport']) : null,
             before: isset($data['before']) ? array_map(
