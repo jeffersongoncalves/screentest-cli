@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.33] - 2026-08-24
+
+### Bug Fixes
+
+- Kebab-case screenshot names, nullable pluginClass, and widen capture safety net to 4xx
+
 ## [1.0.32] - 2026-08-24
 
 ### Bug Fixes
