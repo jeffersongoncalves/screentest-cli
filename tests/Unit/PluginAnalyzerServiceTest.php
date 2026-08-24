@@ -602,3 +602,101 @@ it('leaves pluginClass null instead of a fake "Unknown\\Plugin" fallback when no
 
     expect($analysis->pluginClass)->toBeNull();
 });
+
+function makeRoutesFixturePlugin(): string
+{
+    $root = sys_get_temp_dir().'/screentest-fixture-routes-'.uniqid();
+
+    mkdir($root.'/src/Http/Controllers', recursive: true);
+    mkdir($root.'/routes', recursive: true);
+
+    file_put_contents($root.'/composer.json', json_encode([
+        'name' => 'acme/newsletter',
+        'autoload' => [
+            'psr-4' => [
+                'Acme\\Newsletter\\' => 'src/',
+            ],
+        ],
+        'require' => [],
+    ]));
+
+    // Mirrors jeffersongoncalves/laravel-newsletter's routes/web.php: a grouped
+    // prefix+name, a plain named route, a signed route-model-bound route inside
+    // the group, and an unrelated auth-gated route outside it.
+    file_put_contents($root.'/routes/web.php', <<<'PHP'
+        <?php
+
+        use Illuminate\Support\Facades\Route;
+        use Acme\Newsletter\Http\Controllers\SubscriptionController;
+
+        Route::prefix('newsletter')
+            ->name('newsletter.')
+            ->middleware('web')
+            ->group(function (): void {
+                Route::get('subscribe', [SubscriptionController::class, 'showForm'])
+                    ->name('subscribe.form');
+
+                Route::get('confirm/{emailGroupMember}', [SubscriptionController::class, 'confirm'])
+                    ->middleware('signed')
+                    ->name('confirm');
+            });
+
+        Route::get('admin/dashboard', [SubscriptionController::class, 'dashboard'])
+            ->middleware('auth')
+            ->name('admin.dashboard');
+        PHP);
+
+    file_put_contents($root.'/src/Http/Controllers/SubscriptionController.php', <<<'PHP'
+        <?php
+
+        namespace Acme\Newsletter\Http\Controllers;
+
+        use Acme\Newsletter\Models\EmailGroupMember;
+
+        class SubscriptionController
+        {
+            public function showForm()
+            {
+                //
+            }
+
+            public function confirm(EmailGroupMember $emailGroupMember)
+            {
+                //
+            }
+
+            public function dashboard()
+            {
+                //
+            }
+        }
+        PHP);
+
+    return $root;
+}
+
+it('detects named routes from routes/*.php, including group name/middleware inheritance and route-model-binding', function () {
+    $pluginPath = makeRoutesFixturePlugin();
+
+    $analysis = (new PluginAnalyzerService)->analyze($pluginPath);
+
+    $byName = [];
+    foreach ($analysis->routes as $route) {
+        $byName[$route->name] = $route;
+    }
+
+    expect($byName)->toHaveKeys(['newsletter.subscribe.form', 'newsletter.confirm', 'admin.dashboard']);
+
+    expect($byName['newsletter.subscribe.form']->signed)->toBeFalse()
+        ->and($byName['newsletter.subscribe.form']->auth)->toBeFalse()
+        ->and($byName['newsletter.subscribe.form']->params)->toBe([]);
+
+    expect($byName['newsletter.confirm']->signed)->toBeTrue()
+        ->and($byName['newsletter.confirm']->auth)->toBeFalse()
+        ->and($byName['newsletter.confirm']->params)->toBe(['emailGroupMember'])
+        ->and($byName['newsletter.confirm']->paramModels)->toBe([
+            'emailGroupMember' => 'Acme\\Newsletter\\Models\\EmailGroupMember',
+        ]);
+
+    expect($byName['admin.dashboard']->auth)->toBeTrue();
+});

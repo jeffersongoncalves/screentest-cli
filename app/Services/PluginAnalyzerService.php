@@ -8,6 +8,7 @@ use App\DTOs\FieldInfo;
 use App\DTOs\PageInfo;
 use App\DTOs\PluginAnalysis;
 use App\DTOs\ResourceInfo;
+use App\DTOs\RouteInfo;
 use App\Enums\FilamentVersion;
 use Symfony\Component\Finder\Finder;
 use Symfony\Component\Finder\SplFileInfo;
@@ -39,6 +40,7 @@ class PluginAnalyzerService
         $psr4 = $composerData['autoload']['psr-4'] ?? [];
         $resources = $this->detectResources($pluginPath, $psr4);
         $pages = $this->detectPages($pluginPath);
+        $routes = $this->detectRoutes($pluginPath, $psr4);
         $expandedDepPackages = $this->expandTransitiveDeps($pluginPath, $depPackages);
         $publishTags = $this->detectDependencyPublishTags($pluginPath, $expandedDepPackages);
         $envCandidates = $this->detectDependencyEnvFlags($pluginPath, $expandedDepPackages);
@@ -49,6 +51,7 @@ class PluginAnalyzerService
             filamentVersion: $filamentVersion,
             resources: $resources,
             pages: $pages,
+            routes: $routes,
             publishTags: $publishTags,
             envCandidates: $envCandidates,
         );
@@ -575,6 +578,251 @@ class PluginAnalyzerService
     private function kebabCase(string $value): string
     {
         return strtolower(preg_replace('/([a-z0-9])([A-Z])/', '$1-$2', $value));
+    }
+
+    /**
+     * Detect plain named GET routes declared in `routes/*.php` — this is what a package
+     * with no Filament Resources at all (a plain Laravel package shipping public routes,
+     * e.g. a newsletter/subscription package) has instead: no Resource to introspect for
+     * screenshots, but the routes themselves are perfectly screenshot-able once a name
+     * (to `route()`/`URL::signedRoute()` by) and, for a `signed` route, the fact that it
+     * needs a signature are known.
+     *
+     * @param  array<string, string>  $psr4
+     * @return RouteInfo[]
+     */
+    protected function detectRoutes(string $pluginPath, array $psr4): array
+    {
+        $routesPath = $pluginPath.'/routes';
+
+        if (! is_dir($routesPath)) {
+            return [];
+        }
+
+        $finder = new Finder;
+        $finder->files()->in($routesPath)->name('*.php')->sortByName();
+
+        $routes = [];
+
+        foreach ($finder as $file) {
+            array_push($routes, ...$this->parseRoutesFile($file->getContents(), $pluginPath, $psr4));
+        }
+
+        return $routes;
+    }
+
+    /**
+     * @param  array<string, string>  $psr4
+     * @return RouteInfo[]
+     */
+    private function parseRoutesFile(string $content, string $pluginPath, array $psr4): array
+    {
+        $groups = $this->detectRouteGroups($content);
+
+        if (! preg_match_all(
+            '/Route::(get|post|put|patch|delete)\s*\(\s*[\'"]([^\'"]*)[\'"]\s*,/',
+            $content,
+            $matches,
+            PREG_OFFSET_CAPTURE,
+        )) {
+            return [];
+        }
+
+        $routes = [];
+
+        foreach ($matches[0] as $i => $fullMatch) {
+            if ($matches[1][$i][0] !== 'get') {
+                continue; // only a GET request makes sense to screenshot
+            }
+
+            $uri = $matches[2][$i][0];
+            $offset = $fullMatch[1];
+            $chain = $this->extractStatementChain($content, $offset);
+
+            if (! preg_match('/->name\s*\(\s*[\'"]([^\'"]+)[\'"]\s*\)/', $chain, $nameMatch)) {
+                continue; // unnamed route — nothing route()/signedRoute() could target
+            }
+
+            $group = $this->findEnclosingRouteGroup($groups, $offset);
+            $routeName = ($group['namePrefix'] ?? '').$nameMatch[1];
+            $signed = ($group['signed'] ?? false) || $this->middlewareChainIncludes($chain, 'signed');
+            $auth = ($group['auth'] ?? false) || $this->middlewareChainIncludes($chain, 'auth');
+
+            $params = [];
+            if (preg_match_all('/\{([A-Za-z_][A-Za-z0-9_]*)\??\}/', $uri, $paramMatches, PREG_SET_ORDER)) {
+                foreach ($paramMatches as $paramMatch) {
+                    if (! str_ends_with($paramMatch[0], '?}')) {
+                        $params[] = $paramMatch[1];
+                    }
+                }
+            }
+
+            $paramModels = $params !== []
+                ? $this->resolveRouteModelBindings($chain, $content, $params, $pluginPath, $psr4)
+                : [];
+
+            $routes[] = new RouteInfo(
+                name: $routeName,
+                uri: $uri,
+                signed: $signed,
+                auth: $auth,
+                params: $params,
+                paramModels: $paramModels,
+            );
+        }
+
+        return $routes;
+    }
+
+    /**
+     * Find `Route::prefix(...)->name(...)->middleware(...)->group(function () { ... })`
+     * blocks (one level — a nested group inside another isn't followed, an acceptable
+     * gap given how rarely package route files nest more than one level) and return each
+     * one's char range plus the name prefix / signed / auth flags routes inside it inherit.
+     *
+     * @return array<int, array{start: int, end: int, namePrefix: string, signed: bool, auth: bool}>
+     */
+    private function detectRouteGroups(string $content): array
+    {
+        $groups = [];
+
+        if (! preg_match_all('/Route::(?:prefix|group|name|middleware|domain)\s*\(/', $content, $starts, PREG_OFFSET_CAPTURE)) {
+            return [];
+        }
+
+        foreach ($starts[0] as $start) {
+            $offset = $start[1];
+
+            if ($this->findEnclosingRouteGroup($groups, $offset) !== null) {
+                continue; // already covered by a group root found earlier in this pass
+            }
+
+            $window = substr($content, $offset, 1000);
+
+            if (! preg_match('/^Route::[A-Za-z]+\s*\([^;{]*?->group\s*\(\s*(?:function|fn)[^{]*\{/s', $window, $headerMatch)) {
+                continue; // not actually a ->group() chain
+            }
+
+            $header = $headerMatch[0];
+            $braceOffset = $offset + strlen($header) - 1;
+            $body = $this->extractBracedBody($content, $braceOffset);
+
+            $namePrefix = preg_match('/->name\s*\(\s*[\'"]([^\'"]*)[\'"]\s*\)/', $header, $m) ? $m[1] : '';
+
+            $groups[] = [
+                'start' => $offset,
+                'end' => $braceOffset + strlen($body) + 1,
+                'namePrefix' => $namePrefix,
+                'signed' => $this->middlewareChainIncludes($header, 'signed'),
+                'auth' => $this->middlewareChainIncludes($header, 'auth'),
+            ];
+        }
+
+        return $groups;
+    }
+
+    /**
+     * @param  array<int, array{start: int, end: int, namePrefix: string, signed: bool, auth: bool}>  $groups
+     * @return array{start: int, end: int, namePrefix: string, signed: bool, auth: bool}|null
+     */
+    private function findEnclosingRouteGroup(array $groups, int $offset): ?array
+    {
+        foreach ($groups as $group) {
+            if ($offset >= $group['start'] && $offset < $group['end']) {
+                return $group;
+            }
+        }
+
+        return null;
+    }
+
+    private function middlewareChainIncludes(string $chain, string $middleware): bool
+    {
+        return (bool) preg_match('/->middleware\s*\([^)]*[\'"]'.preg_quote($middleware, '/').'(?::[^\'"]*)?[\'"][^)]*\)/', $chain);
+    }
+
+    /**
+     * Given a route's `Route::get('uri', [Controller::class, 'action'])->...` chain and
+     * its required param names, resolve each param that Laravel would route-model-bind
+     * (i.e. the controller action type-hints it with an Eloquent model class rather than
+     * a scalar) by reading the controller file's method signature.
+     *
+     * @param  string[]  $params
+     * @param  array<string, string>  $psr4
+     * @return array<string, string>
+     */
+    private function resolveRouteModelBindings(string $chain, string $fileContent, array $params, string $pluginPath, array $psr4): array
+    {
+        if (! preg_match('/\[\s*([A-Za-z0-9_\\\\]+)::class\s*,\s*[\'"]([A-Za-z0-9_]+)[\'"]\s*\]/', $chain, $actionMatch)) {
+            return [];
+        }
+
+        // The `use ...;` import for the controller class lives at the top of the
+        // routes file, not inside this one statement's chain — resolve against
+        // the whole file's imports, not just the local snippet.
+        $fqcn = $this->resolveClassReference($actionMatch[1], $fileContent) ?? ltrim($actionMatch[1], '\\');
+        $path = $this->fqcnToPath($fqcn, $pluginPath, $psr4);
+
+        if ($path === null || ! is_file($path)) {
+            return [];
+        }
+
+        $controllerContent = file_get_contents($path);
+
+        if ($controllerContent === false) {
+            return [];
+        }
+
+        $method = $actionMatch[2];
+
+        if (! preg_match('/function\s+'.preg_quote($method, '/').'\s*\(([^)]*)\)/', $controllerContent, $sigMatch)) {
+            return [];
+        }
+
+        $scalarTypes = ['int', 'string', 'bool', 'float', 'array', 'mixed'];
+        $paramModels = [];
+
+        foreach ($params as $param) {
+            if (! preg_match('/([A-Za-z0-9_\\\\]+)\s+\$'.preg_quote($param, '/').'\b/', $sigMatch[1], $typeMatch)) {
+                continue;
+            }
+
+            $type = ltrim($typeMatch[1], '\\?');
+
+            if (in_array(strtolower($type), $scalarTypes, true)) {
+                continue;
+            }
+
+            $paramModels[$param] = $this->resolveClassReference($type, $controllerContent) ?? $type;
+        }
+
+        return $paramModels;
+    }
+
+    /**
+     * Given the offset of the start of a `Route::...(` call, return everything up to
+     * (not including) the statement-terminating top-level `;` — depth aware, so a
+     * closure/array/nested call inside the chain doesn't end it early.
+     */
+    private function extractStatementChain(string $content, int $offset, int $maxLength = 2000): string
+    {
+        $chunk = substr($content, $offset, $maxLength);
+        $depth = 0;
+        $length = strlen($chunk);
+
+        for ($i = 0; $i < $length; $i++) {
+            $char = $chunk[$i];
+
+            if ($char === '(' || $char === '[' || $char === '{') {
+                $depth++;
+            } elseif ($char === ')' || $char === ']' || $char === '}') {
+                $depth--;
+            } elseif ($char === ';' && $depth === 0) {
+                return substr($chunk, 0, $i);
+            }
+        }
+
+        return $chunk;
     }
 
     /**

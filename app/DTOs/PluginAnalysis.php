@@ -12,6 +12,7 @@ readonly class PluginAnalysis
         public ?FilamentVersion $filamentVersion,
         public array $resources = [],
         public array $pages = [],
+        public array $routes = [],
         public array $panelIds = [],
         public array $publishTags = [],
         public array $envCandidates = [],
@@ -30,6 +31,10 @@ readonly class PluginAnalysis
             pages: isset($data['pages']) ? array_map(
                 fn (array $page) => PageInfo::fromArray($page),
                 $data['pages'],
+            ) : [],
+            routes: isset($data['routes']) ? array_map(
+                fn (array $route) => RouteInfo::fromArray($route),
+                $data['routes'],
             ) : [],
             panelIds: $data['panelIds'] ?? [],
             publishTags: $data['publishTags'] ?? [],

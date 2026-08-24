@@ -6,6 +6,7 @@ namespace App\Commands;
 
 use App\Concerns\ResolvesPluginPath;
 use App\DTOs\PluginAnalysis;
+use App\DTOs\RouteInfo;
 use App\Enums\FilamentVersion;
 use App\Services\ConfigService;
 use App\Services\PluginAnalyzerService;
@@ -87,7 +88,8 @@ class InitCommand extends Command
 
         if ($analysis->pluginClass === null) {
             $this->warn('No Filament Plugin class detected — this doesn\'t look like a Filament plugin. '
-                .'"install.plugins" will be left empty and "screenshots" will need to be filled in manually.');
+                .'"install.plugins" will be left empty, the temp project installs plain "laravel/laravel" '
+                .'instead of a Filakit base kit, and screenshots are auto-detected from routes/*.php where possible.');
             $this->newLine();
         }
 
@@ -138,8 +140,10 @@ class InitCommand extends Command
             $updateReadme = ! $this->option('no-readme');
         }
 
-        // Determine Filakit based on detected Filament version
-        $filakitKit = match ($analysis->filamentVersion) {
+        // A plain non-Filament package has no use for a Filakit base kit (it exists to
+        // scaffold a Filament panel) — spin up an ordinary Laravel app instead, which is
+        // all a package's own public routes/views need to run against.
+        $filakitKit = $analysis->pluginClass === null ? 'laravel/laravel' : match ($analysis->filamentVersion) {
             FilamentVersion::V3 => 'filakitphp/basev3',
             FilamentVersion::V4 => 'filakitphp/basev4',
             FilamentVersion::V5 => 'filakitphp/basev5',
@@ -179,9 +183,9 @@ class InitCommand extends Command
                     'password' => 'password',
                     'name' => 'Admin User',
                 ],
-                'models' => $this->mergeByKey($existingModels, $this->buildModelSeedConfig($analysis), 'model'),
+                'models' => $this->mergeByKey($existingModels, $this->buildModelSeedConfig($selectedScreenshots, $analysis), 'model'),
             ],
-            'screenshots' => $this->mergeByKey($existingScreenshots, $this->buildScreenshotsConfig($selectedScreenshots, $analysis), 'name'),
+            'screenshots' => $this->mergeScreenshots($existingScreenshots, $this->buildScreenshotsConfig($selectedScreenshots, $analysis)),
             'output' => [
                 'directory' => 'screenshots',
                 'themes' => ['light', 'dark'],
@@ -218,6 +222,37 @@ class InitCommand extends Command
             foreach ($analysis->pages as $page) {
                 $this->line('  - '.$page->name.' (/admin/'.$page->slug.')');
             }
+            $this->newLine();
+        }
+
+        $authRoutes = array_values(array_filter($analysis->routes, fn (RouteInfo $route) => $route->auth));
+        $unresolvedParamRoutes = array_values(array_filter(
+            $analysis->routes,
+            fn (RouteInfo $route) => ! $route->auth && $this->routeHasUnresolvedParams($route),
+        ));
+        $screenshottableRoutes = array_values(array_filter(
+            $analysis->routes,
+            fn (RouteInfo $route) => ! $route->auth && ! $this->routeHasUnresolvedParams($route),
+        ));
+
+        if (! empty($screenshottableRoutes)) {
+            $this->info('Detected '.count($screenshottableRoutes).' named route(s):');
+            foreach ($screenshottableRoutes as $route) {
+                $this->line('  - '.$route->name.($route->signed ? ' (signed)' : ''));
+            }
+            $this->newLine();
+        }
+
+        if (! empty($authRoutes)) {
+            $this->warn('Skipped '.count($authRoutes)." auth-gated route(s) — can't be auto-screenshotted without knowing how to authenticate: "
+                .implode(', ', array_map(fn ($route) => $route->name, $authRoutes)));
+            $this->newLine();
+        }
+
+        if (! empty($unresolvedParamRoutes)) {
+            $this->warn('Skipped '.count($unresolvedParamRoutes)." route(s) with a required param that isn't route-model-bound "
+                .'(no safe default value to guess — add manually with the right routeParams): '
+                .implode(', ', array_map(fn ($route) => $route->name, $unresolvedParamRoutes)));
             $this->newLine();
         }
 
@@ -277,7 +312,29 @@ class InitCommand extends Command
             $options["page-{$page->slug}"] = "{$page->name} (custom page)";
         }
 
+        foreach ($analysis->routes as $route) {
+            if ($route->auth || $this->routeHasUnresolvedParams($route)) {
+                continue;
+            }
+
+            $options["route-{$route->name}"] = $route->signed ? "{$route->name} (signed route)" : $route->name;
+        }
+
         return $options;
+    }
+
+    /**
+     * A required route param only gets a safe default value (1) when it's resolved to
+     * an Eloquent model class — a seeded record with id 1 is a reasonable guess. A
+     * param the controller type-hints as a scalar (e.g. a string slug) has no such
+     * guessable default; defaulting it to 1 anyway would produce a URL nothing matches
+     * (e.g. `newsletter.webview`'s `{route}` is a slug like "monthly-update", not a
+     * numeric id) — so that route is treated the same as an auth-gated one: skipped,
+     * left for manual configuration.
+     */
+    private function routeHasUnresolvedParams(RouteInfo $route): bool
+    {
+        return count($route->params) > count($route->paramModels);
     }
 
     /**
@@ -325,6 +382,29 @@ class InitCommand extends Command
             }
         }
 
+        foreach ($analysis->routes as $route) {
+            if ($route->auth || $this->routeHasUnresolvedParams($route) || ! in_array("route-{$route->name}", $selectedKeys, true)) {
+                continue;
+            }
+
+            $entry = [
+                'name' => str_replace('.', '-', $route->name),
+                'route' => $route->name,
+            ];
+
+            if ($route->params !== []) {
+                // A record has to exist for route-model-binding to resolve — id 1 mirrors
+                // the /1/edit convention already used for resource screenshots above.
+                $entry['routeParams'] = array_fill_keys($route->params, 1);
+            }
+
+            if ($route->signed) {
+                $entry['signed'] = true;
+            }
+
+            $screenshots[] = $entry;
+        }
+
         return $screenshots;
     }
 
@@ -353,19 +433,79 @@ class InitCommand extends Command
     }
 
     /**
-     * Build model seed configuration from detected resources.
+     * Same idea as mergeByKey(), but a screenshot has two identities that both mean
+     * "already covered, don't add another": its `name`, and — for a route-based
+     * entry — the `route` it targets. Without the second check, an auto-detected route
+     * screenshot (name: "newsletter-confirm") would duplicate a manually named one
+     * hitting the exact same route (name: "confirmed") just because their `name`s differ.
+     *
+     * @param  array<int, array<string, mixed>>  $existing
+     * @param  array<int, array<string, mixed>>  $incoming
+     * @return array<int, array<string, mixed>>
+     */
+    private function mergeScreenshots(array $existing, array $incoming): array
+    {
+        $merged = $existing;
+        $seenNames = array_column($existing, 'name');
+        $seenRoutes = array_column($existing, 'route');
+
+        foreach ($incoming as $item) {
+            if (in_array($item['name'], $seenNames, true)) {
+                continue;
+            }
+
+            if (isset($item['route']) && in_array($item['route'], $seenRoutes, true)) {
+                continue;
+            }
+
+            $merged[] = $item;
+            $seenNames[] = $item['name'];
+
+            if (isset($item['route'])) {
+                $seenRoutes[] = $item['route'];
+            }
+        }
+
+        return $merged;
+    }
+
+    /**
+     * Build model seed configuration from detected resources, plus one record (count: 1,
+     * just enough for route-model-binding to resolve) per Eloquent model a selected
+     * route's controller action type-hints — skipped if a resource already seeds that
+     * model with its own (larger) count.
      *
      * @return array<int, array<string, mixed>>
      */
-    private function buildModelSeedConfig(PluginAnalysis $analysis): array
+    private function buildModelSeedConfig(array $selectedKeys, PluginAnalysis $analysis): array
     {
         $models = [];
+        $seen = [];
 
         foreach ($analysis->resources as $resource) {
             $models[] = [
                 'model' => $resource->model,
                 'count' => 10,
             ];
+            $seen[$resource->model] = true;
+        }
+
+        foreach ($analysis->routes as $route) {
+            if (! in_array("route-{$route->name}", $selectedKeys, true)) {
+                continue;
+            }
+
+            foreach ($route->paramModels as $modelClass) {
+                if (isset($seen[$modelClass])) {
+                    continue;
+                }
+
+                $models[] = [
+                    'model' => $modelClass,
+                    'count' => 1,
+                ];
+                $seen[$modelClass] = true;
+            }
         }
 
         return $models;
