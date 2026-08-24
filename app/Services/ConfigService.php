@@ -54,6 +54,24 @@ class ConfigService
         return file_exists($this->config($pluginPath)->path());
     }
 
+    /**
+     * Read the raw, unvalidated config array straight off disk, or null if it doesn't
+     * exist/isn't valid JSON. Used by `init --force` to merge freshly auto-detected
+     * values with whatever was already manually curated, instead of overwriting it.
+     */
+    public function loadRaw(string $pluginPath): ?array
+    {
+        $configPath = $this->config($pluginPath)->path();
+
+        if (! file_exists($configPath)) {
+            return null;
+        }
+
+        $data = json_decode((string) file_get_contents($configPath), true);
+
+        return is_array($data) ? $data : null;
+    }
+
     protected function config(string $pluginPath): JsonConfigService
     {
         return new JsonConfigService(new PerProjectScope($pluginPath, 'screentest.json'));

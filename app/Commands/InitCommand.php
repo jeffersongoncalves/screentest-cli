@@ -54,6 +54,13 @@ class InitCommand extends Command
             return self::FAILURE;
         }
 
+        // Re-running init (--force) must not silently wipe out manually curated
+        // entries that auto-detection can't (re)produce on its own — e.g.
+        // install.publish/env tags added for a wrapped dependency not passed to
+        // --deps this time, seed.models for a plain non-Filament package, or
+        // hand-added screenshots for routes with no matching Resource.
+        $existingConfig = $configService->loadRaw($pluginPath) ?? [];
+
         // Check composer.json exists
         if (! $this->hasComposerJson($pluginPath)) {
             $this->error('No composer.json found. Are you in a Filament plugin directory?');
@@ -139,6 +146,11 @@ class InitCommand extends Command
             default => 'filakitphp/basev5',
         };
 
+        $existingPublish = is_array($existingConfig['install']['publish'] ?? null) ? $existingConfig['install']['publish'] : [];
+        $existingEnv = is_array($existingConfig['install']['env'] ?? null) ? $existingConfig['install']['env'] : [];
+        $existingModels = is_array($existingConfig['seed']['models'] ?? null) ? $existingConfig['seed']['models'] : [];
+        $existingScreenshots = is_array($existingConfig['screenshots'] ?? null) ? $existingConfig['screenshots'] : [];
+
         // Build the config array
         $config = [
             'plugin' => [
@@ -156,9 +168,9 @@ class InitCommand extends Command
                         'panel' => 'admin',
                     ],
                 ] : [],
-                'publish' => $analysis->publishTags,
+                'publish' => array_values(array_unique([...$existingPublish, ...$analysis->publishTags])),
                 'post_install_commands' => ['migrate'],
-                'env' => $analysis->envCandidates,
+                'env' => [...$existingEnv, ...$analysis->envCandidates],
             ],
             'seed' => [
                 'auto_detect' => true,
@@ -167,9 +179,9 @@ class InitCommand extends Command
                     'password' => 'password',
                     'name' => 'Admin User',
                 ],
-                'models' => $this->buildModelSeedConfig($analysis),
+                'models' => $this->mergeByKey($existingModels, $this->buildModelSeedConfig($analysis), 'model'),
             ],
-            'screenshots' => $this->buildScreenshotsConfig($selectedScreenshots, $analysis),
+            'screenshots' => $this->mergeByKey($existingScreenshots, $this->buildScreenshotsConfig($selectedScreenshots, $analysis), 'name'),
             'output' => [
                 'directory' => 'screenshots',
                 'themes' => ['light', 'dark'],
@@ -314,6 +326,30 @@ class InitCommand extends Command
         }
 
         return $screenshots;
+    }
+
+    /**
+     * Merge two lists of associative arrays, keeping every entry from $existing as-is
+     * (preserving manual edits like a custom count/attributes/url) and appending only
+     * the $incoming entries whose $key value isn't already present.
+     *
+     * @param  array<int, array<string, mixed>>  $existing
+     * @param  array<int, array<string, mixed>>  $incoming
+     * @return array<int, array<string, mixed>>
+     */
+    private function mergeByKey(array $existing, array $incoming, string $key): array
+    {
+        $merged = $existing;
+        $seen = array_column($existing, $key);
+
+        foreach ($incoming as $item) {
+            if (! in_array($item[$key], $seen, true)) {
+                $merged[] = $item;
+                $seen[] = $item[$key];
+            }
+        }
+
+        return $merged;
     }
 
     /**
