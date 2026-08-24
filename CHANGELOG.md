@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.34] - 2026-08-24
+
+### Bug Fixes
+
+- Sort Finder results in detectConfigGateKeys for deterministic order
+- Init --force no longer wipes manually curated config on re-run
+
+### Features
+
+- **capture:** Support screenshotting signed/named routes
+
 ## [1.0.33] - 2026-08-24
 
 ### Bug Fixes
