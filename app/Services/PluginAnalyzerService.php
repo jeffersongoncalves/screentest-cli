@@ -42,6 +42,7 @@ class PluginAnalyzerService
         $pages = $this->detectPages($pluginPath);
         $routes = $this->detectRoutes($pluginPath, $psr4);
         $expandedDepPackages = $this->expandTransitiveDeps($pluginPath, $depPackages);
+        $relationModels = $this->detectRelationManagerModels($resources, $pluginPath, $psr4, $expandedDepPackages);
         $publishTags = $this->detectDependencyPublishTags($pluginPath, $expandedDepPackages);
         $envCandidates = $this->detectDependencyEnvFlags($pluginPath, $expandedDepPackages);
 
@@ -52,6 +53,7 @@ class PluginAnalyzerService
             resources: $resources,
             pages: $pages,
             routes: $routes,
+            relationModels: $relationModels,
             publishTags: $publishTags,
             envCandidates: $envCandidates,
         );
@@ -508,6 +510,105 @@ class PluginAnalyzerService
     }
 
     /**
+     * A model whose only admin-UI surface is a RelationManager tab on another
+     * Resource's Edit/View page (no Select field referencing it, no Resource of its
+     * own) never shows up in $resources — but its table still renders on every
+     * capture of that page, empty, unless something seeds it. Walks each Resource's
+     * `getRelations()` for `SomeRelationManager::class` entries, reads each one's
+     * `$relationship` name, then searches the plugin's own source plus any `--deps`
+     * package source for a method with that name that builds an Eloquent relationship
+     * (`$this->hasMany(Model::class)` etc.) to find the model it actually points at —
+     * the RelationManager class itself never declares the model directly, only the
+     * owning model's relationship method does.
+     *
+     * @param  ResourceInfo[]  $resources
+     * @param  array<string, string>  $psr4
+     * @param  string[]  $depPackages
+     * @return string[]
+     */
+    protected function detectRelationManagerModels(array $resources, string $pluginPath, array $psr4, array $depPackages): array
+    {
+        $srcPath = $pluginPath.'/src';
+
+        if (! is_dir($srcPath)) {
+            return [];
+        }
+
+        $finder = new Finder;
+        $finder->files()->in($srcPath)->name('*Resource.php')->sortByName();
+
+        $relationshipNames = [];
+
+        foreach ($finder as $file) {
+            $content = $file->getContents();
+
+            if (! preg_match('/function\s+getRelations\s*\([^)]*\)[^{]*\{/', $content, $match, PREG_OFFSET_CAPTURE)) {
+                continue;
+            }
+
+            $body = $this->extractBracedBody($content, $match[0][1] + strlen($match[0][0]) - 1);
+
+            if (! preg_match_all('/([A-Za-z0-9_\\\\]+)::class/', $body, $refs)) {
+                continue;
+            }
+
+            foreach ($refs[1] as $ref) {
+                $fqcn = $this->resolveClassReference($ref, $content) ?? ltrim($ref, '\\');
+                $path = $this->fqcnToPath($fqcn, $pluginPath, $psr4);
+
+                if ($path === null || ! is_file($path)) {
+                    continue;
+                }
+
+                $rmContent = file_get_contents($path);
+
+                if ($rmContent !== false && preg_match('/\$relationship\s*=\s*[\'"]([A-Za-z0-9_]+)[\'"]/', $rmContent, $relMatch)) {
+                    $relationshipNames[] = $relMatch[1];
+                }
+            }
+        }
+
+        $relationshipNames = array_unique($relationshipNames);
+
+        if ($relationshipNames === []) {
+            return [];
+        }
+
+        $ownFinder = new Finder;
+        $ownFinder->files()->in($srcPath)->name('*.php');
+
+        $models = [];
+
+        foreach ([...$ownFinder, ...$this->findDependencyFiles($pluginPath, $depPackages)] as $file) {
+            $content = $file->getContents();
+
+            foreach ($relationshipNames as $name) {
+                if (isset($models[$name])) {
+                    continue;
+                }
+
+                if (! preg_match('/function\s+'.preg_quote($name, '/').'\s*\([^)]*\)[^{]*\{/', $content, $methodMatch, PREG_OFFSET_CAPTURE)) {
+                    continue;
+                }
+
+                $body = $this->extractBracedBody($content, $methodMatch[0][1] + strlen($methodMatch[0][0]) - 1);
+
+                if (preg_match(
+                    '/->(?:hasMany|hasOne|belongsTo|belongsToMany|hasManyThrough|morphMany|morphOne|morphToMany)\s*\(\s*([A-Za-z0-9_\\\\]+)::class/',
+                    $body,
+                    $relCall,
+                )) {
+                    $models[$name] = $this->resolveClassReferenceOrSameNamespace($relCall[1], $content);
+                }
+            }
+        }
+
+        $resourceModels = array_map(fn (ResourceInfo $resource) => $resource->model, $resources);
+
+        return array_values(array_diff(array_unique($models), $resourceModels));
+    }
+
+    /**
      * Detect standalone Filament Page classes (settings/metrics/import-style pages
      * registered via `$panel->pages([...])`, as opposed to a Resource's own
      * List/Create/Edit pages, which live under `<Resource>/Pages/` and extend
@@ -793,7 +894,7 @@ class PluginAnalyzerService
                 continue;
             }
 
-            $paramModels[$param] = $this->resolveClassReference($type, $controllerContent) ?? $type;
+            $paramModels[$param] = $this->resolveClassReferenceOrSameNamespace($type, $controllerContent);
         }
 
         return $paramModels;
@@ -883,6 +984,29 @@ class PluginAnalyzerService
         }
 
         return null;
+    }
+
+    /**
+     * Same as resolveClassReference(), but when a short (unqualified) reference has no
+     * matching `use` import, assumes it's a same-namespace reference (the common case
+     * for a model referenced from within its own package, e.g. `EmailGroup::members()`
+     * pointing at `EmailGroupMember` with no `use` needed) rather than giving up.
+     */
+    private function resolveClassReferenceOrSameNamespace(string $reference, string $fileContent): string
+    {
+        $resolved = $this->resolveClassReference($reference, $fileContent);
+
+        if ($resolved !== null) {
+            return $resolved;
+        }
+
+        $reference = ltrim($reference, '\\');
+
+        if (preg_match('/namespace\s+([A-Za-z0-9_\\\\]+)\s*;/', $fileContent, $nsMatch)) {
+            return $nsMatch[1].'\\'.$reference;
+        }
+
+        return $reference;
     }
 
     /**

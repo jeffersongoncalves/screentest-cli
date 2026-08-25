@@ -700,3 +700,98 @@ it('detects named routes from routes/*.php, including group name/middleware inhe
 
     expect($byName['admin.dashboard']->auth)->toBeTrue();
 });
+
+function makeRelationManagerFixturePlugin(): string
+{
+    $root = sys_get_temp_dir().'/screentest-fixture-relation-manager-'.uniqid();
+
+    mkdir($root.'/src/Resources/EmailGroupResource/RelationManagers', recursive: true);
+    mkdir($root.'/vendor/acme/laravel-newsletter/src/Models', recursive: true);
+
+    file_put_contents($root.'/composer.json', json_encode([
+        'name' => 'acme/filament-newsletter',
+        'autoload' => [
+            'psr-4' => [
+                'Acme\\FilamentNewsletter\\' => 'src/',
+            ],
+        ],
+        'require' => [
+            'filament/filament' => '^3.0',
+            'acme/laravel-newsletter' => '^1.0',
+        ],
+    ]));
+
+    // Mirrors jeffersongoncalves/filament-newsletter's EmailGroupResource exactly:
+    // a RelationManager tab with no Select field and no Resource of its own for the
+    // related model.
+    file_put_contents($root.'/src/Resources/EmailGroupResource.php', <<<'PHP'
+        <?php
+
+        namespace Acme\FilamentNewsletter\Resources;
+
+        use Filament\Resources\Resource;
+        use Acme\FilamentNewsletter\Resources\EmailGroupResource\RelationManagers\MembersRelationManager;
+
+        class EmailGroupResource extends Resource
+        {
+            protected static ?string $model = \Acme\LaravelNewsletter\Models\EmailGroup::class;
+
+            public static function getRelations(): array
+            {
+                return [
+                    MembersRelationManager::class,
+                ];
+            }
+        }
+        PHP);
+
+    file_put_contents($root.'/src/Resources/EmailGroupResource/RelationManagers/MembersRelationManager.php', <<<'PHP'
+        <?php
+
+        namespace Acme\FilamentNewsletter\Resources\EmailGroupResource\RelationManagers;
+
+        use Filament\Resources\RelationManagers\RelationManager;
+
+        class MembersRelationManager extends RelationManager
+        {
+            protected static string $relationship = 'members';
+        }
+        PHP);
+
+    // The relationship (and therefore the related model) is only declared on the
+    // OWNER model, which lives in the wrapped --deps package, not the plugin itself.
+    file_put_contents($root.'/vendor/acme/laravel-newsletter/src/Models/EmailGroup.php', <<<'PHP'
+        <?php
+
+        namespace Acme\LaravelNewsletter\Models;
+
+        use Illuminate\Database\Eloquent\Model;
+        use Illuminate\Database\Eloquent\Relations\HasMany;
+
+        class EmailGroup extends Model
+        {
+            public function members(): HasMany
+            {
+                return $this->hasMany(EmailGroupMember::class);
+            }
+        }
+        PHP);
+
+    return $root;
+}
+
+it('detects a model only reachable via a RelationManager tab by resolving its $relationship into the owner model\'s relation method', function () {
+    $pluginPath = makeRelationManagerFixturePlugin();
+
+    $analysis = (new PluginAnalyzerService)->analyze($pluginPath, ['acme/laravel-newsletter']);
+
+    expect($analysis->relationModels)->toBe(['Acme\\LaravelNewsletter\\Models\\EmailGroupMember']);
+});
+
+it('does not detect relation-manager models without --deps, since the owner model lives in the wrapped package', function () {
+    $pluginPath = makeRelationManagerFixturePlugin();
+
+    $analysis = (new PluginAnalyzerService)->analyze($pluginPath);
+
+    expect($analysis->relationModels)->toBe([]);
+});

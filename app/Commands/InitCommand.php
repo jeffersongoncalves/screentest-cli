@@ -255,6 +255,12 @@ class InitCommand extends Command
             $this->newLine();
         }
 
+        if (! empty($analysis->relationModels)) {
+            $this->info('Detected model(s) only reachable via a RelationManager (seeded so their tab isn\'t empty): '
+                .implode(', ', array_map(fn (string $model) => class_basename($model), $analysis->relationModels)));
+            $this->newLine();
+        }
+
         if (! empty($analysis->publishTags)) {
             $this->info('Detected publish tag(s) from --deps: '.implode(', ', $analysis->publishTags));
             $this->newLine();
@@ -524,6 +530,22 @@ class InitCommand extends Command
                 ];
                 $seen[$modelClass] = true;
             }
+        }
+
+        // A model reachable only through a RelationManager tab has no Resource/route
+        // gating it (there's no page it's the primary subject of), so it's always
+        // seeded — otherwise the relation manager renders empty on every capture of
+        // whatever resource page it's attached to.
+        foreach ($analysis->relationModels as $modelClass) {
+            if (isset($seen[$modelClass])) {
+                continue;
+            }
+
+            $models[] = [
+                'model' => $modelClass,
+                'count' => 3,
+            ];
+            $seen[$modelClass] = true;
         }
 
         return $models;
