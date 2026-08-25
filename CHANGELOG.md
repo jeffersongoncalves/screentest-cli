@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.37] - 2026-08-25
+
+### Bug Fixes
+
+- **init:** Pin RelationManager-seeded model to its owner's record via FK
+
+### Features
+
+- **init:** Seed models only reachable via a RelationManager
+
 ## [1.0.36] - 2026-08-24
 
 ### Bug Fixes
