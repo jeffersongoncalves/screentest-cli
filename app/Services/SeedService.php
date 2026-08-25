@@ -33,6 +33,7 @@ class SeedService
     {
         $this->warnings = [];
         $seederClasses = [];
+        $deferredSeederClasses = [];
 
         // 1. Generate user seeder
         $this->generateUserSeeder($config->seed->user, $projectPath);
@@ -41,18 +42,28 @@ class SeedService
         // 2. Generate seeders for explicitly defined models first — explicit
         // config (in particular per-model `attributes`) must win over
         // auto-detection, never get silently dropped because auto-detect
-        // already claimed that model's seeder class name.
+        // already claimed that model's seeder class name. A model marked
+        // afterResources (e.g. one only reachable via a RelationManager, seeded
+        // with an explicit foreign key pointing at an auto-detected resource's
+        // record) still gets its file generated here, but its *execution* is
+        // deferred past step 3 below — otherwise its FK would point at a row
+        // that doesn't exist yet, which SQLite's enforced foreign keys reject.
         foreach ($config->seed->models as $modelSeedConfig) {
             /** @var ModelSeedConfig $modelSeedConfig */
             $modelShort = class_basename($modelSeedConfig->model);
             $seederClass = "Screentest{$modelShort}Seeder";
 
-            if (in_array($seederClass, $seederClasses, true)) {
+            if (in_array($seederClass, $seederClasses, true) || in_array($seederClass, $deferredSeederClasses, true)) {
                 continue;
             }
 
             $this->generateExplicitModelSeeder($modelSeedConfig, $projectPath);
-            $seederClasses[] = $seederClass;
+
+            if ($modelSeedConfig->afterResources) {
+                $deferredSeederClasses[] = $seederClass;
+            } else {
+                $seederClasses[] = $seederClass;
+            }
         }
 
         // 3. Auto-detect resources and generate factories/seeders for
@@ -60,12 +71,12 @@ class SeedService
         if ($config->seed->autoDetect) {
             $analysis = $this->analyzer->analyze($pluginPath);
             $orderedResources = $this->orderByDependency($analysis->resources);
-            $autoSeederClasses = $this->generateModelSeeders($orderedResources, $config->seed, $projectPath, $seederClasses);
+            $autoSeederClasses = $this->generateModelSeeders($orderedResources, $config->seed, $projectPath, [...$seederClasses, ...$deferredSeederClasses]);
             $seederClasses = array_merge($seederClasses, $autoSeederClasses);
         }
 
         // 4. Create master ScreentestSeeder
-        $this->generateMasterSeeder($seederClasses, $projectPath);
+        $this->generateMasterSeeder([...$seederClasses, ...$deferredSeederClasses], $projectPath);
 
         // 5. Run the master seeder
         $this->process->runOrFail(

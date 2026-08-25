@@ -133,6 +133,40 @@ it('turns a selected signed route into a screenshot entry with routeParams/signe
     ]);
 });
 
+it('seeds a RelationManager-only model pinned to the owner resource\'s record via the detected foreign key, deferred past resources', function () {
+    $command = new InitCommand;
+
+    $analysis = new PluginAnalysis(
+        pluginClass: 'Acme\\Newsletter\\NewsletterPlugin',
+        package: 'acme/newsletter',
+        filamentVersion: null,
+        resources: [
+            new ResourceInfo(
+                class: 'Acme\\Newsletter\\EmailGroupResource',
+                model: 'Acme\\Newsletter\\Models\\EmailGroup',
+                modelShortName: 'EmailGroup',
+            ),
+        ],
+        relationModels: ['Acme\\Newsletter\\Models\\EmailGroupMember' => 'email_group_id'],
+    );
+
+    $models = Closure::bind(
+        fn () => $this->buildModelSeedConfig([], $analysis),
+        $command,
+        InitCommand::class,
+    )();
+
+    expect($models)->toBe([
+        ['model' => 'Acme\\Newsletter\\Models\\EmailGroup', 'count' => 10],
+        [
+            'model' => 'Acme\\Newsletter\\Models\\EmailGroupMember',
+            'count' => 3,
+            'attributes' => ['email_group_id' => 1],
+            'after_resources' => true,
+        ],
+    ]);
+});
+
 it('omits seed.user for a non-Filament package (nothing to log into) but keeps it for a real Filament plugin', function () {
     $command = new InitCommand;
 

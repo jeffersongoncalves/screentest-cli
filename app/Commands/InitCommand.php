@@ -257,7 +257,7 @@ class InitCommand extends Command
 
         if (! empty($analysis->relationModels)) {
             $this->info('Detected model(s) only reachable via a RelationManager (seeded so their tab isn\'t empty): '
-                .implode(', ', array_map(fn (string $model) => class_basename($model), $analysis->relationModels)));
+                .implode(', ', array_map(fn (string $model) => class_basename($model), array_keys($analysis->relationModels))));
             $this->newLine();
         }
 
@@ -535,8 +535,14 @@ class InitCommand extends Command
         // A model reachable only through a RelationManager tab has no Resource/route
         // gating it (there's no page it's the primary subject of), so it's always
         // seeded — otherwise the relation manager renders empty on every capture of
-        // whatever resource page it's attached to.
-        foreach ($analysis->relationModels as $modelClass) {
+        // whatever resource page it's attached to. Pinned to the owner's own record
+        // (id 1, same convention as /1/edit above) via the detected foreign key,
+        // rather than left to whatever a factory's own default relation does (very
+        // commonly `Owner::factory()`, spawning an unrelated parent no capture
+        // ever visits). after_resources defers this seeder's *execution* past the
+        // owner's auto-detected one — the FK would violate SQLite's (enforced by
+        // default) foreign key constraint if seeded first.
+        foreach ($analysis->relationModels as $modelClass => $foreignKey) {
             if (isset($seen[$modelClass])) {
                 continue;
             }
@@ -544,6 +550,8 @@ class InitCommand extends Command
             $models[] = [
                 'model' => $modelClass,
                 'count' => 3,
+                'attributes' => [$foreignKey => 1],
+                'after_resources' => true,
             ];
             $seen[$modelClass] = true;
         }

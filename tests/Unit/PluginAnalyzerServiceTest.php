@@ -785,7 +785,7 @@ it('detects a model only reachable via a RelationManager tab by resolving its $r
 
     $analysis = (new PluginAnalyzerService)->analyze($pluginPath, ['acme/laravel-newsletter']);
 
-    expect($analysis->relationModels)->toBe(['Acme\\LaravelNewsletter\\Models\\EmailGroupMember']);
+    expect($analysis->relationModels)->toBe(['Acme\\LaravelNewsletter\\Models\\EmailGroupMember' => 'email_group_id']);
 });
 
 it('does not detect relation-manager models without --deps, since the owner model lives in the wrapped package', function () {

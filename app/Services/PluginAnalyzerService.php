@@ -524,7 +524,7 @@ class PluginAnalyzerService
      * @param  ResourceInfo[]  $resources
      * @param  array<string, string>  $psr4
      * @param  string[]  $depPackages
-     * @return string[]
+     * @return array<string, string> model FQCN => foreign key column pointing back at the owner
      */
     protected function detectRelationManagerModels(array $resources, string $pluginPath, array $psr4, array $depPackages): array
     {
@@ -577,10 +577,31 @@ class PluginAnalyzerService
         $ownFinder = new Finder;
         $ownFinder->files()->in($srcPath)->name('*.php');
 
+        $resourceModels = array_map(fn (ResourceInfo $resource) => $resource->model, $resources);
+
+        // Model FQCN => foreign key column on it that points back at the owner —
+        // used so init can seed it pinned to the owner's own seeded record, rather
+        // than leaving a factory to spawn an unrelated parent for it (very
+        // common when a factory's own default just does `Owner::factory()`).
         $models = [];
 
         foreach ([...$ownFinder, ...$this->findDependencyFiles($pluginPath, $depPackages)] as $file) {
             $content = $file->getContents();
+
+            // Only trust a relationship method declared on a class that IS one of
+            // this plugin's own Resource models — otherwise an unrelated class
+            // happening to share a method name (e.g. another package's model with
+            // its own "members()") could produce a wrong match.
+            if (! preg_match('/class\s+([A-Za-z0-9_]+)/', $content, $classMatch)) {
+                continue;
+            }
+
+            $namespace = preg_match('/namespace\s+([A-Za-z0-9_\\\\]+)\s*;/', $content, $nsMatch) ? $nsMatch[1] : '';
+            $ownerFqcn = $namespace !== '' ? $namespace.'\\'.$classMatch[1] : $classMatch[1];
+
+            if (! in_array($ownerFqcn, $resourceModels, true)) {
+                continue;
+            }
 
             foreach ($relationshipNames as $name) {
                 if (isset($models[$name])) {
@@ -593,19 +614,37 @@ class PluginAnalyzerService
 
                 $body = $this->extractBracedBody($content, $methodMatch[0][1] + strlen($methodMatch[0][0]) - 1);
 
-                if (preg_match(
-                    '/->(?:hasMany|hasOne|belongsTo|belongsToMany|hasManyThrough|morphMany|morphOne|morphToMany)\s*\(\s*([A-Za-z0-9_\\\\]+)::class/',
+                if (! preg_match(
+                    '/->(?:hasMany|hasOne|belongsTo|belongsToMany|hasManyThrough|morphMany|morphOne|morphToMany)\s*\(\s*([A-Za-z0-9_\\\\]+)::class\s*(?:,\s*[\'"]([A-Za-z0-9_]+)[\'"])?/',
                     $body,
                     $relCall,
                 )) {
-                    $models[$name] = $this->resolveClassReferenceOrSameNamespace($relCall[1], $content);
+                    continue;
                 }
+
+                $modelFqcn = $this->resolveClassReferenceOrSameNamespace($relCall[1], $content);
+                $foreignKey = $relCall[2] ?? ($this->snakeCase(class_basename($ownerFqcn)).'_id');
+
+                $models[$name] = ['model' => $modelFqcn, 'foreignKey' => $foreignKey];
             }
         }
 
-        $resourceModels = array_map(fn (ResourceInfo $resource) => $resource->model, $resources);
+        $result = [];
 
-        return array_values(array_diff(array_unique($models), $resourceModels));
+        foreach ($models as $info) {
+            if (in_array($info['model'], $resourceModels, true)) {
+                continue;
+            }
+
+            $result[$info['model']] = $info['foreignKey'];
+        }
+
+        return $result;
+    }
+
+    private function snakeCase(string $value): string
+    {
+        return strtolower(preg_replace('/([a-z0-9])([A-Z])/', '$1_$2', $value));
     }
 
     /**
@@ -1144,7 +1183,7 @@ class PluginAnalyzerService
     {
         // Match: protected static ?string $model = ModelClass::class;
         if (preg_match('/protected\s+static\s+\??\s*string\s+\$model\s*=\s*([A-Za-z0-9\\\\]+)::class\s*;/', $content, $match)) {
-            $model = $match[1];
+            $model = ltrim($match[1], '\\');
 
             // If it's a short class name, try to resolve from use statements
             if (! str_contains($model, '\\')) {
