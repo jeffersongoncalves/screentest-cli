@@ -8,6 +8,13 @@
 
 CLI tool for automated screenshot generation of Filament plugins. Generates documentation screenshots in light and dark themes with zero manual effort.
 
+<p align="center">
+  <a href="https://github.com/jeffersongoncalves/screentest-cli/actions"><img src="https://github.com/jeffersongoncalves/screentest-cli/actions/workflows/run-tests.yml/badge.svg" alt="Tests" /></a>
+  <a href="https://packagist.org/packages/jeffersongoncalves/screentest-cli"><img src="https://img.shields.io/packagist/dt/jeffersongoncalves/screentest-cli" alt="Total Downloads" /></a>
+  <a href="https://github.com/jeffersongoncalves/screentest-cli/blob/main/LICENSE"><img src="https://img.shields.io/github/license/jeffersongoncalves/screentest-cli" alt="License" /></a>
+  <img src="https://img.shields.io/badge/php-%3E%3D8.2-8892BF" alt="PHP 8.2+" />
+</p>
+
 ## Features
 
 - Reads a `screentest.json` config from your plugin
