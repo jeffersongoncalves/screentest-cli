@@ -93,6 +93,15 @@ async function main() {
               case 'scroll':
                 await page.evaluate((sel) => document.querySelector(sel)?.scrollIntoView(), action.selector);
                 break;
+              case 'scrollToBottom':
+                // Filament widgets are lazy by default (Livewire's wire:intersect) —
+                // they only fetch their content once scrolled into a real viewport.
+                // A fullPage screenshot resizes the viewport to the whole document
+                // right before capturing, which is too late to trigger that fetch,
+                // so widgets below the fold render as empty placeholders unless the
+                // page is actually scrolled through first.
+                await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+                break;
             }
           }
 

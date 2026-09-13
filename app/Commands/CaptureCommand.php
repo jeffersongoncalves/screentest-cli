@@ -83,13 +83,11 @@ class CaptureCommand extends Command
         $this->info("Verifying server at {$baseUrl}...");
 
         try {
-            $response = Http::timeout(5)->get($baseUrl);
-
-            if (! $response->successful() && ! $response->redirect()) {
-                $this->error("Server is not responding properly at {$baseUrl}");
-
-                return self::FAILURE;
-            }
+            // Any HTTP response — even a 404 at the bare root, which is normal
+            // for an admin-panel-only app with no "/" route — proves the
+            // server is reachable. Only a connection-level failure (caught
+            // below) means it isn't.
+            Http::timeout(5)->get($baseUrl);
         } catch (\Exception $e) {
             $this->error("Cannot connect to server at {$baseUrl}: {$e->getMessage()}");
 

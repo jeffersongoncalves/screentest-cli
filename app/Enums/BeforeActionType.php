@@ -10,5 +10,6 @@ enum BeforeActionType: string
     case Type = 'type';
     case Select = 'select';
     case Scroll = 'scroll';
+    case ScrollToBottom = 'scrollToBottom';
     case Screenshot = 'screenshot';
 }
