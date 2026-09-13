@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.39] - 2026-09-13
+
+### Bug Fixes
+
+- Add missing illuminate/http dependency and fix capture reliability
+
 ## [1.0.38] - 2026-09-08
 
 ### Bug Fixes
