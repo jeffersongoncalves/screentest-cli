@@ -8,6 +8,7 @@ readonly class UserConfig
         public string $email = 'admin@example.com',
         public string $password = 'password',
         public string $name = 'Admin User',
+        public string $model = 'App\\Models\\User',
     ) {}
 
     public static function fromArray(array $data): self
@@ -16,6 +17,7 @@ readonly class UserConfig
             email: $data['email'] ?? 'admin@example.com',
             password: $data['password'] ?? 'password',
             name: $data['name'] ?? 'Admin User',
+            model: $data['model'] ?? 'App\\Models\\User',
         );
     }
 }

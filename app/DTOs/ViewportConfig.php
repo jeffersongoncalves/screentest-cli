@@ -7,7 +7,7 @@ readonly class ViewportConfig
     public function __construct(
         public int $width = 1920,
         public int $height = 1080,
-        public int $deviceScaleFactor = 3,
+        public ?int $deviceScaleFactor = null, // null = output.scale
     ) {}
 
     public static function fromArray(array $data): self
@@ -15,7 +15,7 @@ readonly class ViewportConfig
         return new self(
             width: $data['width'] ?? 1920,
             height: $data['height'] ?? 1080,
-            deviceScaleFactor: $data['deviceScaleFactor'] ?? 3,
+            deviceScaleFactor: $data['deviceScaleFactor'] ?? null,
         );
     }
 }

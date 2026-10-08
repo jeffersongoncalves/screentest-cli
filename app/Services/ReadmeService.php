@@ -99,11 +99,16 @@ class ReadmeService
 
     protected function replaceSection(string $content, string $marker, string $section): string
     {
-        $pattern = '/'.preg_quote($marker, '/').'.*?'.preg_quote($marker, '/').'/s';
-
         $replacement = $marker."\n".$section."\n".$marker;
 
-        return preg_replace($pattern, $replacement, $content, 1);
+        // A single marker gets the section inserted after it, plus the closing marker.
+        if (substr_count($content, $marker) < 2) {
+            return preg_replace('/'.preg_quote($marker, '/').'/', addcslashes($replacement, '\\$'), $content, 1);
+        }
+
+        $pattern = '/'.preg_quote($marker, '/').'.*?'.preg_quote($marker, '/').'/s';
+
+        return preg_replace($pattern, addcslashes($replacement, '\\$'), $content, 1);
     }
 
     /** @return array<string, array<string, CaptureResult>> */

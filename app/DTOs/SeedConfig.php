@@ -13,7 +13,8 @@ readonly class SeedConfig
     public static function fromArray(array $data): self
     {
         return new self(
-            autoDetect: $data['autoDetect'] ?? true,
+            // `auto_detect` is the documented key (stub, README, init); `autoDetect` kept for old configs.
+            autoDetect: $data['auto_detect'] ?? $data['autoDetect'] ?? true,
             user: isset($data['user']) ? UserConfig::fromArray($data['user']) : new UserConfig,
             models: isset($data['models']) ? array_map(
                 fn (array $model) => ModelSeedConfig::fromArray($model),

@@ -36,7 +36,7 @@ class CleanupCommand extends Command
         $projectPath = $this->option('project');
 
         if (! $projectPath) {
-            $projectPath = config('screentest.temp_directory');
+            $projectPath = $project->resolveTempDirectory();
         }
 
         if (! is_dir($projectPath)) {

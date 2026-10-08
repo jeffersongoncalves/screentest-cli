@@ -37,6 +37,12 @@ class ReadmeCommand extends Command
             return self::FAILURE;
         }
 
+        if (! str_contains((string) file_get_contents($readmePath), $config->readme->sectionMarker)) {
+            $this->warn("Marker {$config->readme->sectionMarker} not found in README.md — nothing written.");
+
+            return self::FAILURE;
+        }
+
         // Build results from existing screenshots on disk
         $results = $this->discoverExistingScreenshots($config, $pluginPath);
 
