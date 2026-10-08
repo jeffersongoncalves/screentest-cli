@@ -96,7 +96,7 @@ The `screentest.json` file controls the entire process:
       "name": "resource-list",
       "url": "admin/resources",
       "selector": "body",
-      "viewport": { "width": 1920, "height": 1080, "deviceScaleFactor": 3 },
+      "viewport": { "width": 1920, "height": 1080 },
       "fullPage": false,
       "before": [
         { "action": "wait", "delay": 500 }
@@ -115,6 +115,17 @@ The `screentest.json` file controls the entire process:
   }
 }
 ```
+
+Optional keys:
+
+| Key | Default | Purpose |
+|---|---|---|
+| `filakit.version` | latest tag | Version constraint for `create-project`, e.g. `"dev-main"` to use unreleased kit changes |
+| `seed.user.model` | `App\Models\User` | Model the login user is created with — set it when the admin panel uses another guard (e.g. `App\Models\Admin`) |
+| `screenshots[].guest` | `false` | Capture in a fresh, logged-out browser context (login/register pages) |
+| `output.scale` | `3` | Device scale factor; `1` gives 1920px-wide images instead of 5760px. A screenshot's `viewport.deviceScaleFactor` overrides it |
+
+A single `<!-- SCREENSHOTS -->` marker is enough — the section is inserted after it and the closing marker is added.
 
 ## Requirements
 

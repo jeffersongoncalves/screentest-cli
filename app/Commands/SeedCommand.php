@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Commands;
 
 use App\Concerns\LoadsConfig;
+use App\Services\ProjectService;
 use App\Services\SeedService;
 use LaravelZero\Framework\Commands\Command;
 
@@ -29,13 +30,13 @@ class SeedCommand extends Command
     /**
      * Execute the console command.
      */
-    public function handle(SeedService $seedService): int
+    public function handle(SeedService $seedService, ProjectService $project): int
     {
         $config = $this->loadConfig($this->option('path'));
 
         $pluginPath = $this->resolvePluginPath($this->option('path'));
 
-        $projectPath = $this->option('project') ?? config('screentest.temp_directory');
+        $projectPath = $this->option('project') ?? $project->resolveTempDirectory();
 
         if (! $projectPath || ! is_dir($projectPath)) {
             $this->error('Project path does not exist: '.($projectPath ?? 'not specified'));

@@ -11,6 +11,7 @@ readonly class OutputConfig
         public string $directory = 'screenshots',
         public array $themes = [Theme::Light, Theme::Dark],
         public ImageFormat $format = ImageFormat::Png,
+        public int $scale = 3,
     ) {}
 
     public static function fromArray(array $data): self
@@ -22,6 +23,7 @@ readonly class OutputConfig
                 $data['themes'],
             ) : [Theme::Light, Theme::Dark],
             format: isset($data['format']) ? ImageFormat::from($data['format']) : ImageFormat::Png,
+            scale: (int) ($data['scale'] ?? 3),
         );
     }
 }

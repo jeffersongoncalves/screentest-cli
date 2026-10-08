@@ -282,6 +282,7 @@ PHP;
             'user' => [
                 'email' => $config->seed->user->email,
                 'password' => $config->seed->user->password,
+                'model' => $config->seed->user->model,
             ],
             'screenshots' => array_map(fn (ScreenshotConfig $screenshot) => [
                 'name' => $screenshot->name,
@@ -302,15 +303,16 @@ PHP;
                 'viewport' => $screenshot->viewport ? [
                     'width' => $screenshot->viewport->width,
                     'height' => $screenshot->viewport->height,
-                    'deviceScaleFactor' => $screenshot->viewport->deviceScaleFactor,
+                    'deviceScaleFactor' => $screenshot->viewport->deviceScaleFactor ?? $config->output->scale,
                 ] : null,
                 'fullPage' => $screenshot->fullPage,
+                'guest' => $screenshot->guest,
             ], $capturableScreenshots),
             'themes' => array_map(fn ($theme) => $theme->value, $config->output->themes),
             'viewport' => [
                 'width' => 1920,
                 'height' => 1080,
-                'deviceScaleFactor' => 3,
+                'deviceScaleFactor' => $config->output->scale,
             ],
             'format' => $config->output->format->value,
             'outputDir' => self::CONTAINER_OUTPUT_DIR,
@@ -319,14 +321,7 @@ PHP;
 
         $configJson = json_encode($configData, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
 
-        $stubPath = base_path('stubs/capture.mjs.stub');
-
-        if (File::exists($stubPath)) {
-            $script = File::get($stubPath);
-            $script = str_replace('{{CONFIG_JSON}}', $configJson, $script);
-        } else {
-            $script = $this->buildCaptureScript($configJson);
-        }
+        $script = str_replace('{{CONFIG_JSON}}', $configJson, File::get(base_path('stubs/capture.mjs.stub')));
 
         $scriptPath = $projectPath.'/capture.mjs';
         File::put($scriptPath, $script);
@@ -448,153 +443,5 @@ PHP;
         }
 
         return $updated;
-    }
-
-    protected function buildCaptureScript(string $configJson): string
-    {
-        return <<<JS
-import puppeteer from 'puppeteer';
-import sharp from 'sharp';
-import fs from 'fs';
-import path from 'path';
-
-const config = {$configJson};
-
-function log(data) {
-  console.log(JSON.stringify(data));
-}
-
-async function main() {
-  const browser = await puppeteer.launch({
-    headless: 'new',
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
-  });
-
-  try {
-    for (const theme of config.themes) {
-      const page = await browser.newPage();
-
-      await page.setViewport({
-        width: config.viewport.width,
-        height: config.viewport.height,
-        deviceScaleFactor: config.viewport.deviceScaleFactor,
-      });
-
-      await page.emulateMediaFeatures([
-        { name: 'prefers-color-scheme', value: theme },
-      ]);
-
-      // Login (session cookies are shared across pages in the same browser,
-      // so subsequent themes may already be authenticated and redirect to dashboard)
-      await page.goto(`\${config.baseUrl}/admin/login`, { waitUntil: 'networkidle0' });
-
-      const needsLogin = !page.url().includes('/admin/login') ? false
-        : !!(await page.\$('input[type="email"]') || await page.\$('[name="data.email"]'));
-
-      if (needsLogin) {
-        const emailSelector = (await page.\$('[name="data.email"]'))
-          ? '[name="data.email"]'
-          : 'input[type="email"]';
-        const passwordSelector = (await page.\$('[name="data.password"]'))
-          ? '[name="data.password"]'
-          : 'input[type="password"]';
-
-        await page.type(emailSelector, config.user.email);
-        await page.type(passwordSelector, config.user.password);
-        await page.click('button[type="submit"]');
-        await page.waitForNavigation({ waitUntil: 'networkidle0' });
-      }
-
-      for (const screenshot of config.screenshots) {
-        try {
-          const viewport = screenshot.viewport || config.viewport;
-          await page.setViewport({
-            width: viewport.width,
-            height: viewport.height,
-            deviceScaleFactor: viewport.deviceScaleFactor,
-          });
-
-          const targetUrl = `\${config.baseUrl}/\${screenshot.url}`.replace(/([^:]\/)\/+/g, '\$1');
-          const response = await page.goto(targetUrl, { waitUntil: 'networkidle0', timeout: config.navigationTimeout });
-
-          let warning = null;
-          const status = response ? response.status() : null;
-          if (status && status >= 500) {
-            warning = `page responded with HTTP \${status} (possible server error)`;
-          } else if (status && status >= 400) {
-            warning = `page responded with HTTP \${status} (auth/signature/not-found — check the URL and any required auth/signing)`;
-          } else if (/Whoops\b|Ignition\\Exceptions|<title>\s*Server Error\s*<\/title>/i.test(await page.content())) {
-            warning = 'page HTML matches a Laravel debug-mode error page (Whoops/Ignition) — likely captured an error instead of the intended page';
-          }
-
-          // Execute before actions
-          for (const action of (screenshot.before || [])) {
-            switch (action.action) {
-              case 'click':
-                await page.click(action.selector);
-                break;
-              case 'hover':
-                await page.hover(action.selector);
-                break;
-              case 'wait':
-                await new Promise(r => setTimeout(r, action.delay || 500));
-                break;
-              case 'type':
-                await page.type(action.selector, action.value);
-                break;
-              case 'select':
-                await page.select(action.selector, action.value);
-                break;
-              case 'scroll':
-                await page.evaluate((sel) => document.querySelector(sel)?.scrollIntoView(), action.selector);
-                break;
-            }
-          }
-
-          const outputDir = path.join(config.outputDir, theme);
-          fs.mkdirSync(outputDir, { recursive: true });
-
-          const filePath = path.join(outputDir, `\${screenshot.name}.\${config.format}`);
-
-          let element = screenshot.selector === 'body' ? page : await page.$(screenshot.selector);
-          if (!element) element = page;
-
-          const buffer = await element.screenshot({
-            type: config.format === 'jpg' ? 'jpeg' : 'png',
-            fullPage: element === page ? !!screenshot.fullPage : undefined,
-          });
-
-          if (screenshot.crop) {
-            const cropped = await sharp(buffer)
-              .extract({ left: screenshot.crop.x, top: screenshot.crop.y, width: screenshot.crop.width, height: screenshot.crop.height })
-              .toBuffer();
-            fs.writeFileSync(filePath, cropped);
-          } else if (config.format === 'webp') {
-            const converted = await sharp(buffer).webp().toBuffer();
-            fs.writeFileSync(filePath, converted);
-          } else {
-            fs.writeFileSync(filePath, buffer);
-          }
-
-          log({ type: 'progress', name: screenshot.name, theme, status: 'done', path: filePath, warning });
-        } catch (err) {
-          log({ type: 'progress', name: screenshot.name, theme, status: 'error', error: err.message });
-        }
-      }
-
-      await page.close();
-    }
-  } finally {
-    await browser.close();
-  }
-
-  log({ type: 'complete' });
-}
-
-main().catch(err => {
-  console.error(err);
-  process.exit(1);
-});
-JS;
     }
 }

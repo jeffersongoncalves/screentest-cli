@@ -41,7 +41,7 @@ class CaptureCommand extends Command
     {
         $config = $this->loadConfig($this->option('path'));
         $pluginPath = $this->resolvePluginPath($this->option('path'));
-        $projectPath = $this->option('project') ?? config('screentest.temp_directory');
+        $projectPath = $this->option('project') ?? $projectService->resolveTempDirectory();
 
         if (! is_dir($projectPath)) {
             $this->error("Project path does not exist: {$projectPath}");
@@ -72,6 +72,7 @@ class CaptureCommand extends Command
                     directory: $config->output->directory,
                     themes: array_values($filteredThemes),
                     format: $config->output->format,
+                    scale: $config->output->scale,
                 ),
                 readme: $config->readme,
             );

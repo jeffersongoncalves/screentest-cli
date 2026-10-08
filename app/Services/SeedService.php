@@ -36,8 +36,11 @@ class SeedService
         $deferredSeederClasses = [];
 
         // 1. Generate user seeder
+        // Named apart from the Screentest{Model}Seeder scheme so an explicit
+        // seed.models entry for the login model (e.g. App\Models\User) doesn't
+        // collide with it and get skipped.
         $this->generateUserSeeder($config->seed->user, $projectPath);
-        $seederClasses[] = 'ScreentestUserSeeder';
+        $seederClasses[] = 'ScreentestLoginUserSeeder';
 
         // 2. Generate seeders for explicitly defined models first — explicit
         // config (in particular per-model `attributes`) must win over
@@ -92,15 +95,14 @@ class SeedService
 
 namespace Database\Seeders;
 
-use App\Models\User;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\Hash;
 
-class ScreentestUserSeeder extends Seeder
+class ScreentestLoginUserSeeder extends Seeder
 {
     public function run(): void
     {
-        User::create([
+        \\{$user->model}::create([
             'name' => '{$user->name}',
             'email' => '{$user->email}',
             'password' => Hash::make('{$user->password}'),
@@ -109,7 +111,7 @@ class ScreentestUserSeeder extends Seeder
 }
 PHP;
 
-        $seederPath = $projectPath.'/database/seeders/ScreentestUserSeeder.php';
+        $seederPath = $projectPath.'/database/seeders/ScreentestLoginUserSeeder.php';
         $this->ensureDirectory(dirname($seederPath));
         file_put_contents($seederPath, $content);
     }

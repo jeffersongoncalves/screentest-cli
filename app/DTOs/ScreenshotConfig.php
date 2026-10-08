@@ -15,6 +15,7 @@ readonly class ScreenshotConfig
         public array $before = [],
         public ?CropConfig $crop = null,
         public bool $fullPage = false,
+        public bool $guest = false,
     ) {}
 
     public static function fromArray(array $data): self
@@ -33,6 +34,7 @@ readonly class ScreenshotConfig
             ) : [],
             crop: isset($data['crop']) ? CropConfig::fromArray($data['crop']) : null,
             fullPage: $data['fullPage'] ?? false,
+            guest: $data['guest'] ?? false,
         );
     }
 }

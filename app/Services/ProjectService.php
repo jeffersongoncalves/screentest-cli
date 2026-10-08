@@ -34,8 +34,11 @@ class ProjectService
             }
         }
 
+        // filakit.version (e.g. "dev-main") installs unreleased kit changes instead of the latest tag
+        $version = $config->filakit->version !== null ? ' "'.$config->filakit->version.'"' : '';
+
         $this->process->composerOrFail(
-            "create-project {$config->filakit->kit} {$tempDir} --no-interaction --prefer-dist",
+            "create-project {$config->filakit->kit} {$tempDir}{$version} --no-interaction --prefer-dist",
             timeout: 600,
         );
 
@@ -373,7 +376,7 @@ class ProjectService
         return $this->herdConfigCache;
     }
 
-    protected function resolveTempDirectory(): string
+    public function resolveTempDirectory(): string
     {
         if ($this->isHerdEnabled()) {
             $herdConfig = $this->getHerdConfig();
@@ -439,19 +442,18 @@ class ProjectService
             );
         }
 
-        // Set theme mode to System so prefers-color-scheme works for dark/light captures
-        $filakitConfigPath = $projectPath.'/config/filakit.php';
+        // Set theme mode to System so prefers-color-scheme works for dark/light captures.
+        // Every config file is checked, not just filakit.php — kits rename it
+        // (e.g. config/editorialtheme.php).
+        foreach (File::glob($projectPath.'/config/*.php') as $configPath) {
+            $configContent = File::get($configPath);
 
-        if (File::exists($filakitConfigPath)) {
-            $filakitConfig = File::get($filakitConfigPath);
-
-            if (str_contains($filakitConfig, 'ThemeMode::Light') || str_contains($filakitConfig, 'ThemeMode::Dark')) {
-                $filakitConfig = str_replace(
+            if (str_contains($configContent, 'ThemeMode::Light') || str_contains($configContent, 'ThemeMode::Dark')) {
+                File::put($configPath, str_replace(
                     ['ThemeMode::Light', 'ThemeMode::Dark'],
                     'ThemeMode::System',
-                    $filakitConfig,
-                );
-                File::put($filakitConfigPath, $filakitConfig);
+                    $configContent,
+                ));
             }
         }
     }
