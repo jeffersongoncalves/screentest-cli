@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.41] - 2026-10-08
+
+### Bug Fixes
+
+- Harden guest capture, login detection and version arg (#27 review)
+
 ## [1.0.40] - 2026-10-08
 
 ### Bug Fixes
