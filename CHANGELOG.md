@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.40] - 2026-10-08
+
+### Bug Fixes
+
+- Support multi-panel kits, guest pages and output scale (#26)
+
+### CI/CD
+
+- Pass release version input through env
+- Standardize dependabot config
+- Standardize tests workflow
+- Remove run-tests.yml (replaced by tests.yml)
+- Standardize tests workflow
+- Auto-merge dependabot github-actions minor/patch
+
+### Dependencies
+
+- **deps:** Bump orhun/git-cliff-action in the actions-deps group (#25)
+
+### Documentation
+
+- Point tests badge to tests.yml
+- Fix banner layout
+
 ## [1.0.39] - 2026-09-13
 
 ### Bug Fixes
