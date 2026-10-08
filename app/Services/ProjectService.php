@@ -35,7 +35,8 @@ class ProjectService
         }
 
         // filakit.version (e.g. "dev-main") installs unreleased kit changes instead of the latest tag
-        $version = $config->filakit->version !== null ? ' "'.$config->filakit->version.'"' : '';
+        // ponytail: escaped, not an argv array — composerBinary() may be a configured multi-word string (e.g. "php composer.phar")
+        $version = $config->filakit->version !== null ? ' '.escapeshellarg($config->filakit->version) : '';
 
         $this->process->composerOrFail(
             "create-project {$config->filakit->kit} {$tempDir}{$version} --no-interaction --prefer-dist",

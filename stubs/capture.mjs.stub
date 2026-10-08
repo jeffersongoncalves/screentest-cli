@@ -21,12 +21,20 @@ async function main() {
       // context — the main page logs in, after which guest routes redirect away.
       const guestShots = config.screenshots.filter(s => s.guest);
       if (guestShots.length) {
-        const context = await browser.createBrowserContext();
-        const guestPage = await preparePage(await context.newPage(), theme);
-        for (const screenshot of guestShots) {
-          await captureShot(guestPage, screenshot, theme);
+        let context = null;
+        try {
+          context = await browser.createBrowserContext();
+          const guestPage = await preparePage(await context.newPage(), theme);
+          for (const screenshot of guestShots) {
+            await captureShot(guestPage, screenshot, theme);
+          }
+        } catch (err) {
+          for (const screenshot of guestShots) {
+            log({ type: 'progress', name: screenshot.name, theme, status: 'error', error: err.message });
+          }
+        } finally {
+          await context?.close().catch(() => {});
         }
-        await context.close();
       }
 
       const authShots = config.screenshots.filter(s => !s.guest);
@@ -77,10 +85,11 @@ async function login(page) {
   // subsequent themes may already be authenticated and redirect to dashboard
   await page.goto(`${config.baseUrl}/admin/login`, { waitUntil: 'networkidle0' });
 
-  const needsLogin = !page.url().includes('/admin/login') ? false
-    : !!(await page.$('input[type="email"]') || await page.$('[name="data.email"]'));
+  if (!page.url().includes('/admin/login')) return;
 
-  if (!needsLogin) return;
+  if (!(await page.$('input[type="email"]') || await page.$('[name="data.email"]'))) {
+    throw new Error('login failed, /admin/login has no recognized email field (input[type="email"] or [name="data.email"])');
+  }
 
   const emailSelector = (await page.$('[name="data.email"]'))
     ? '[name="data.email"]'
