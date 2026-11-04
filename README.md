@@ -14,7 +14,7 @@ CLI tool for automated screenshot generation of Filament plugins. Generates docu
   <a href="https://github.com/jeffersongoncalves/screentest-cli/actions"><img src="https://github.com/jeffersongoncalves/screentest-cli/actions/workflows/tests.yml/badge.svg" alt="Tests" /></a>
   <a href="https://packagist.org/packages/jeffersongoncalves/screentest-cli"><img src="https://img.shields.io/packagist/dt/jeffersongoncalves/screentest-cli" alt="Total Downloads" /></a>
   <a href="https://github.com/jeffersongoncalves/screentest-cli/blob/main/LICENSE"><img src="https://img.shields.io/github/license/jeffersongoncalves/screentest-cli" alt="License" /></a>
-  <img src="https://img.shields.io/badge/php-%3E%3D8.2-8892BF" alt="PHP 8.2+" />
+  <img src="https://img.shields.io/badge/php-%3E%3D8.3-8892BF" alt="PHP 8.3+" />
 </p>
 
 ## Features
@@ -129,7 +129,7 @@ A single `<!-- SCREENSHOTS -->` marker is enough — the section is inserted aft
 
 ## Requirements
 
-- PHP 8.2+
+- PHP 8.3+
 - Node.js (for Puppeteer)
 - pnpm
 - Composer
