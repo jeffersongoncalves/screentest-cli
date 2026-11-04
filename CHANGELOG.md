@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.1.0] - 2026-11-04
+
+### Dependencies
+
+- **deps:** Bump shivammathur/setup-php (#29)
+- **deps:** Bump stefanzweifel/git-auto-commit-action (#31)
+
+### Miscellaneous Tasks
+
+- **deps-dev:** Bump the composer-deps group with 5 updates
+- **deps-dev:** Bump league/flysystem from 3.31.0 to 3.36.0
+- **deps-dev:** Bump symfony/http-foundation from 7.4.18 to 7.4.22
+- Upgrade to Laravel Zero 13
+
+### Other
+
+- Auto-assign issues and pull requests
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
 ## [1.0.41] - 2026-10-08
 
 ### Bug Fixes
